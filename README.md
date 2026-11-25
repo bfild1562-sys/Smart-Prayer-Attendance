@@ -1,4 +1,6 @@
-# Smart Prayer Attendance — Android v2.0 (offline application)
+**New in v2.1:** Settings can authorize Google Drive via Android Google Identity Services and upload a harmless test file. See `GOOGLE_DRIVE_SETUP.md`. This is NOT yet attendance/fingerprint backup or sync.
+
+# Smart Prayer Attendance — Android v2.1 (Google Drive connection test) (offline application)
 
 **This is a real Android source project, upgraded from the supplied `Smart_Prayer_Android_Source_1_1(2).zip`.** It is not the old “Institution workspace URL” launcher. Android UI assets are bundled in the APK and use a Java bridge to an app-private SQLite database.
 

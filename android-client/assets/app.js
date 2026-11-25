@@ -129,9 +129,23 @@ function staffPage(){
  `<div class="card"><h2>Recent staff activity</h2>${activity.length?activity.slice(0,50).map(a=>`<div class="list-item"><div class="row between"><strong>${esc(a.username)}</strong><small>${dateText(a.at)}</small></div><small>${esc(a.action)} · ${esc(a.subject)}</small></div>`).join(''):empty('No staff activity yet.')}</div>`);
 }
 function settings(){
- refreshData();layout('settings','Local storage and honest integration status. No external website URL is required.',
- `<div class="card"><h2>Application</h2><div class="list-item row between"><div><strong>Android offline app v2.0</strong><br><small>Package: lk.skilltech.prayer</small></div><span class="pill ok">Local</span></div><div class="list-item"><strong>Students</strong><br><small>${people.length} stored in this phone's SQLite database</small></div><div class="list-item"><strong>Prayer times</strong><br><small>Persist locally until an admin saves a change</small></div><div class="buttons" style="margin-top:12px">${button('Export students','export',{style:'secondary'})}${button('Sign out','logout',{style:'subtle'})}</div></div>`+
- `<div class="card"><h2>Hardware & cloud roadmap</h2><div class="list-item row between"><div><strong>R503Pro / ESP32</strong><br><small>Continuous AutoIdentify, 6+6 enrollment</small></div><span class="pill gray">Not integrated</span></div><div class="list-item row between"><div><strong>8GB microSD card</strong><br><small>Device-side offline scan history</small></div><span class="pill gray">Not integrated</span></div><div class="list-item row between"><div><strong>Google Drive</strong><br><small>Cloud backup and cross-device synchronization</small></div><span class="pill gray">Not connected</span></div><div class="list-item row between"><div><strong>TFT + buzzer + DS3231</strong><br><small>Embedded device firmware integration</small></div><span class="pill gray">Planned</span></div></div><div class="warnbox">Staff accounts, attendance and schedules in this version exist only on this phone. Export your data before uninstalling. Google Drive synchronization and fingerprint template backup require working backend/ESP32 integration.</div>`);
+ refreshData();const driveState=api("driveStatus"),signing=api("appSigning");layout('settings','Local storage and honest integration status. No external website URL is required.',
+ `<div class="card"><h2>Application</h2><div class="list-item row between"><div><strong>Android offline app v2.1</strong><br><small>Package: lk.skilltech.prayer</small></div><span class="pill ok">Local</span></div><div class="list-item"><strong>Students</strong><br><small>${people.length} stored in this phone's SQLite database</small></div><div class="list-item"><strong>Prayer times</strong><br><small>Persist locally until an admin saves a change</small></div><div class="buttons" style="margin-top:12px">${button('Export students','export',{style:'secondary'})}${button('Sign out','logout',{style:'subtle'})}</div></div>`+
+ `<div class="card"><h2>Google Drive connection</h2><p>Authorize your Google account and upload one harmless test file. This does NOT upload attendance or fingerprints yet.</p>
+ <div class="list-item row between"><div><strong>Google Drive access</strong><br><small>${driveState.authorizedBefore?'Previously authorized on this phone':'Not authorized yet'}</small></div><span class="pill ${driveState.authorizedBefore?'ok':'warn'}">${driveState.authorizedBefore?'Previously allowed':'Not connected'}</span></div>
+ <div class="list-item"><strong>Last successful test:</strong><br><small>${driveState.lastTestAt?dateText(driveState.lastTestAt):'No successful test upload yet'}</small></div>
+ ${driveState.lastFileId?`<div class="list-item"><small>Last uploaded Google file ID: ${esc(driveState.lastFileId)}</small></div>`:''}
+ ${driveState.lastError?`<div class="warnbox">${esc(driveState.lastError)}</div>`:''}
+ ${auth.admin?`<div class="buttons">${button(driveState.authorizedBefore?'Test Google Drive again':'Connect Google Drive & upload test','drive-connect')}</div>`:'<div class="warnbox">Ask an administrator to connect Google Drive.</div>'}
+ <div class="footer-note">Google will show its own consent screen. We never request your Gmail password or store OAuth access tokens. Requires Google Play services, Google Cloud OAuth setup, and internet.</div></div>`+
+ `<div class="card"><h2>Google Cloud Android configuration</h2>
+ <p>Enter these exact values when creating an Android OAuth client in Google Cloud:</p>
+ <div class="list-item"><small>Android package name</small><br><strong>${esc(signing.package)}</strong></div>
+ <div class="list-item"><small>Installed APK certificate SHA-1</small><br><code style="display:block;word-break:break-all;user-select:text">${esc(signing.sha1)}</code></div>
+ <div class="buttons">${button('Copy APK SHA-1','copy-signing',{style:'secondary'})}</div>
+ <div class="warnbox">GitHub's default debug signing key can change between builds. For Google OAuth to keep working after APK updates, use the same signing key for every build. This app currently only tests Drive connectivity.</div></div>`+
+ `<div class="card"><h2>Hardware roadmap</h2><div class="list-item row between"><div><strong>R503Pro / ESP32</strong><br><small>Continuous AutoIdentify, 6+6 enrollment</small></div><span class="pill gray">Not integrated</span></div><div class="list-item row between"><div><strong>8GB microSD card</strong><br><small>Device-side offline scan history</small></div><span class="pill gray">Not integrated</span></div><div class="list-item row between"><div><strong>TFT + buzzer + DS3231</strong><br><small>Embedded device firmware</small></div><span class="pill gray">Planned</span></div></div>
+ <div class="warnbox">Attendance data stays local until a separate, verified backup-and-restore workflow is implemented. A successful connection test does not mean backups or multi-phone synchronization are working.</div>`);
 }
 function go(name){try{switch(name){case'dashboard':dashboard();break;case'students':students();break;case'mark':markPage();break;case'schedule':schedulePage();break;case'events':editEvent=null;eventPage();break;case'reports':reports();break;case'staff':if(auth.admin)staffPage();else dashboard();break;case'settings':settings();break;default:dashboard();}}catch(err){showToast(err.message);}}
 document.addEventListener('click',e=>{let b=e.target.closest('[data-act]');if(b){let action=b.dataset.act,id=b.dataset.id;try{
@@ -139,6 +153,8 @@ document.addEventListener('click',e=>{let b=e.target.closest('[data-act]');if(b)
  switch(action){
  case 'login-page':access('login');break;case'signup-page':access('signup');break;
  case 'logout':api('lock');access();break;
+ case 'drive-connect':api('driveConnect');showToast('Opening Google Drive authorization…');break;
+ case 'copy-signing':api('copySigning');showToast('SHA-1 copied to clipboard.');break;
  case 'student-add':if(auth.admin)studentEditor();break;
  case 'student-edit':if(auth.admin)studentEditor(people.find(p=>p.id===id));break;
  case 'import':case'export':api(action);showToast('Choose a file using the Android document picker.');break;
@@ -161,6 +177,7 @@ document.addEventListener('submit',e=>{e.preventDefault();let form=e.target,d=Ob
  case 'event-save':api('eventSave',{...d,id:editEvent?.id||'',late_minutes:Number(d.late_minutes)});editEvent=null;eventPage();showToast('Special event saved.');break;
  }}catch(err){showToast(err.message);}});
 document.addEventListener('submit',e=>{if(!e.target.classList.contains('schedule-form'))return;e.preventDefault();try{let d=Object.fromEntries(new FormData(e.target));api('scheduleSave',{...d,prayer:e.target.dataset.prayer,late_minutes:Number(d.late_minutes)});schedulePage();showToast('Schedule saved permanently.');}catch(err){showToast(err.message);}});
+window.onDriveUpdate=(message,success)=>{if(page==='settings'){settings();}showToast(message);};
 window.back=()=>{if(page==='signup'){access('login');return true;}if(page==='login')return false;if(page==='dashboard')return false;dashboard();return true;};
 window.refreshRoster=()=>{if(page==='students')students();else if(page==='dashboard')dashboard();};
 try{access();}catch(e){root.innerHTML=`<div class="card" style="margin:22px">Unable to load local app data: ${esc(e.message)}</div>`;}

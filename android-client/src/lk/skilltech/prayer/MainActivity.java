@@ -33,6 +33,7 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private StaffAccounts staff;
     private AttendanceStore attendance;
+    private DriveConnection drive;
     private String exportFrom="",exportTo="";
     private boolean choosingDocument;
     private long backgroundAt;
@@ -59,6 +60,9 @@ public class MainActivity extends Activity {
         store=new Store(this);
         staff=new StaffAccounts(store.getWritableDatabase(),prefs);
         attendance=new AttendanceStore(store.getWritableDatabase(),staff);
+        drive=new DriveConnection(this,prefs,(message,success)->{
+            if(!isDestroyed())web.evaluateJavascript("window.onDriveUpdate && window.onDriveUpdate("+JSONObject.quote(message)+","+success+")",null);
+        });
         getWindow().setStatusBarColor(Color.rgb(17,45,72));
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
         web=new WebView(this);
@@ -121,6 +125,12 @@ public class MainActivity extends Activity {
                 requireUnlock();
                 switch(action){
                 case "list":return pack(roster(),null);
+                case "driveStatus":return pack(drive.status(),null);
+                case "driveConnect":
+                    if(!staff.state().optBoolean("admin",false))throw new IllegalStateException("Administrator access required.");
+                    runOnUiThread(()->drive.connectAndTest());return pack(true,null);
+                case "appSigning":return pack(new JSONObject().put("package",getPackageName()).put("sha1",appSha1()),null);
+                case "copySigning":runOnUiThread(()->{android.content.ClipboardManager c=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);c.setPrimaryClip(android.content.ClipData.newPlainText("Smart Prayer SHA-1",appSha1()));toast("APK SHA-1 copied.");});return pack(true,null);
                 case "overview":return pack(attendance.overview(),null);
                 case "schedules":return pack(attendance.schedules(),null);
                 case "scheduleSave":attendance.saveSchedule(d);return pack(true,null);
@@ -145,6 +155,24 @@ public class MainActivity extends Activity {
             catch(IllegalArgumentException|IllegalStateException e){return pack(null,e.getMessage());}
             catch(Exception e){return pack(null,"Could not complete this operation.");}
         }
+    }
+
+    private String appSha1(){
+        try{
+            android.content.pm.PackageInfo info;
+            android.content.pm.Signature[] signatures;
+            if(android.os.Build.VERSION.SDK_INT>=28){
+                info=getPackageManager().getPackageInfo(getPackageName(),android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
+                signatures=info.signingInfo.getApkContentsSigners();
+            }else{
+                info=getPackageManager().getPackageInfo(getPackageName(),android.content.pm.PackageManager.GET_SIGNATURES);
+                signatures=info.signatures;
+            }
+            byte[] digest=java.security.MessageDigest.getInstance("SHA-1").digest(signatures[0].toByteArray());
+            StringBuilder b=new StringBuilder();
+            for(byte part:digest){if(b.length()>0)b.append(':');b.append(String.format(java.util.Locale.US,"%02X",part&255));}
+            return b.toString();
+        }catch(Exception e){return "Unavailable ("+e.getClass().getSimpleName()+")";}
     }
 
     private JSONArray roster() throws JSONException{
@@ -194,7 +222,9 @@ public class MainActivity extends Activity {
         catch(android.content.ActivityNotFoundException e){choosingDocument=false;toast("No document picker available.");}
     }
     @Override protected void onActivityResult(int request,int result,Intent data){
-        super.onActivityResult(request,result,data);choosingDocument=false;
+        super.onActivityResult(request,result,data);
+        if(drive!=null && drive.handleActivityResult(request,result,data))return;
+        choosingDocument=false;
         if(!staff.signedIn()||result!=RESULT_OK||data==null||data.getData()==null)return;
         Uri uri=data.getData();
         String actor=staff.identity();
