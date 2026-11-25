@@ -1,0 +1,20 @@
+plugins {
+    id 'com.android.application' version '8.7.3'
+}
+android {
+    namespace 'lk.skilltech.prayer'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'lk.skilltech.prayer'
+        minSdk 26
+        targetSdk 35
+        versionCode 3
+        versionName '2.0'
+    }
+    sourceSets.main {
+        manifest.srcFile 'AndroidManifest.xml'
+        java.srcDirs = ['src']
+        res.srcDirs = ['res']
+        assets.srcDirs = ['assets']
+    }
+}
