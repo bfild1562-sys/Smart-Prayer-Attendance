@@ -4,8 +4,9 @@ const root=document.querySelector('#main');
 const toast=document.querySelector('#msg');
 let page='login',auth=null,people=[],schedules=[],events=[],timer=null,toastTimer=null;
 let editStudent=null,editEvent=null,lastInvite='',reportMonth='',reportFilter='',logFrom='',logTo='',markDay='';
+let centralInvite='',centralFeedback='';
 const PRAYERS=['Fajr','Dhuhr','Asr','Maghrib','Isha'];
-const icons={dashboard:'◫',students:'♙',mark:'✓',schedule:'◷',events:'✧',reports:'▤',staff:'♙',settings:'⚙'};
+const icons={dashboard:'◫',students:'♙',mark:'✓',schedule:'◷',events:'✧',reports:'▤',staff:'♙',cloud:'☁',settings:'⚙'};
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const api=(name,details={})=>{let result=JSON.parse(Phone.call(name,JSON.stringify(details)));if(result.error)throw Error(result.error);return result.data;};
 const showToast=s=>{toast.textContent=s;clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.textContent='',4100);};
@@ -28,10 +29,10 @@ function clearTicker(){if(timer){clearInterval(timer);timer=null;}}
 function refreshData(){auth=api('state');if(auth.unlocked){people=api('list');schedules=api('schedules');events=api('events');}}
 function layout(name,subtitle,content){
  clearTicker();page=name;
- const tabs=[['dashboard','Home'],['students','Students'],['mark','Mark'],['schedule','Prayers'],['events','Events'],['reports','Reports']];if(auth.admin)tabs.push(['staff','Staff']);tabs.push(['settings','Settings']);
+ const tabs=[['dashboard','Home'],['students','Students'],['mark','Mark'],['schedule','Prayers'],['events','Events'],['reports','Reports']];if(auth.admin)tabs.push(['staff','Staff']);tabs.push(['cloud','Cloud']);tabs.push(['settings','Settings']);
  root.innerHTML=`<div class="topbar"><div><div class="brand">☾ Smart Prayer</div><small>Attendance management</small></div><span class="pill">${esc(auth.username)}${auth.admin?' · Admin':''}</span></div>`+
  `<nav class="nav" aria-label="Main sections">${tabs.map(([k,v])=>`<button type="button" class="${k===name?'active':''}" data-act="${k}">${v}</button>`).join('')}</nav>`+
- `<div class="shell"><div class="page-intro"><div class="eyebrow">Smart Prayer / ${esc(name)}</div><h1>${esc(name==='schedule'?'Prayer schedules':name==='mark'?'Manual attendance':name==='settings'?'Device & settings':name==='dashboard'?'Dashboard':name==='students'?'Student register':name==='events'?'Special events':name==='reports'?'Reports & logs':'Staff management')}</h1><p>${esc(subtitle)}</p></div>${content}</div>`;
+ `<div class="shell"><div class="page-intro"><div class="eyebrow">Smart Prayer / ${esc(name)}</div><h1>${esc(name==='schedule'?'Prayer schedules':name==='mark'?'Manual attendance':name==='settings'?'Device & settings':name==='dashboard'?'Dashboard':name==='students'?'Student register':name==='events'?'Special events':name==='reports'?'Reports & logs':name==='cloud'?'Central staff & sync':'Staff management')}</h1><p>${esc(subtitle)}</p></div>${content}</div>`;
 }
 function access(mode='login'){
  clearTicker();page=mode;auth=api('state');if(auth.unlocked){refreshData();dashboard();return;}
@@ -128,31 +129,64 @@ function staffPage(){
  `<div class="card"><h2>Registered staff</h2>${members.map(s=>`<div class="list-item row between"><div><strong>${esc(s.username)}</strong><br><small>${s.admin?'Administrator':'Staff'} · ${s.approved?'Enabled':'Disabled'}</small></div>${s.id===auth.id?'':s.admin?'':button(s.approved?'Disable':'Enable','staff-toggle',{id:s.id,style:'secondary',small:true})}</div>`).join('')}</div>`+
  `<div class="card"><h2>Recent staff activity</h2>${activity.length?activity.slice(0,50).map(a=>`<div class="list-item"><div class="row between"><strong>${esc(a.username)}</strong><small>${dateText(a.at)}</small></div><small>${esc(a.action)} · ${esc(a.subject)}</small></div>`).join(''):empty('No staff activity yet.')}</div>`);
 }
+function cloudPage(){
+ refreshData();const c=api('centralStatus'),summary=c.summary||null;
+ const overview=summary?`<div class="metric-grid"><div class="metric"><div class="num">${number(summary.students)}</div><small>Central students</small></div><div class="metric"><div class="num">${number(summary.attendance)}</div><small>Central attendance entries</small></div><div class="metric"><div class="num">${number(summary.staff)}</div><small>Central staff</small></div></div>
+ <div class="card"><h2>Shared recent attendance</h2>${(summary.recent||[]).length?summary.recent.map(x=>`<div class="list-item"><div class="row between"><strong>${esc(x.name||x.student_id)}</strong>${badge(x.status)}</div><small>${esc(x.session_key)} · ${esc(x.session_date)} · ${esc(x.changed_by)}</small></div>`).join(''):empty('No central attendance uploaded yet.')}</div>`:'';
+ layout('cloud','Shared institutional database — optional while your existing offline attendance stays available.',
+ `<div class="card"><div class="row between"><h2>Central server</h2><span class="pill ${c.connected?'ok':'warn'}">${c.connected?'Signed in':'Not connected'}</span></div>
+ <p>This is NOT an external website launcher. Your offline dashboard, schedules and manual marking work without a central server. You need a real, deployed HTTPS server for sharing data across phones.</p>
+ ${c.connected?`<div class="goodbox">Signed in as <strong>${esc(c.username)}</strong> (${esc(c.role)}) at ${esc(c.server)}</div><div class="buttons">${button('Refresh shared records','central-refresh',{style:'secondary'})}${button('Disconnect central session','central-disconnect',{style:'subtle'})}</div>`:
+ `<form id="central-login-form">${field('Institution HTTPS server URL','server',c.server||'','url','required placeholder="https://your-school-domain.com" autocomplete="url"')}${field('Central staff username','username','','text','required autocomplete="username"')}${field('Central staff password','password','','password','required autocomplete="current-password"')}<button type="submit" class="btn wide">Connect and sign in</button></form>`}
+ ${c.error?`<div class="warnbox" style="margin-top:10px">${esc(c.error)}</div>`:''}
+ ${centralFeedback?`<div class="goodbox" style="margin-top:10px">${esc(centralFeedback)}</div>`:''}
+ </div>`+
+ (c.connected?`<div class="card"><h2>Upload this phone's local records</h2><p>Upload existing students, prayer schedules, events and attendance to the shared server. Staff accounts upload attendance only. Each batch is checked for duplicates and conflicts before saving.</p>
+ <div class="warnbox">This first-stage sync is manually triggered and uploads only. It does NOT automatically import other staff's records into the phone's local SQLite database. Cloud reports show shared data separately.</div>
+ <div class="buttons">${button(c.busy?'Uploading…':'Upload local data','central-upload',{style:'secondary'})}</div></div>${overview}`:
+ `<div class="card"><h2>Register on the central server (staff invitation)</h2><p>A central administrator generates a one-time invitation. Staff register once and use their central username/password on any authorized device.</p>
+ <form id="central-register-form">${field('Institution HTTPS URL','server',c.server||'','url','required')}${field('One-time central invitation code','code','','text','required autocomplete="off"')}${field('Choose central username','username','','text','required minlength="3"')}${field('Choose central password','password','','password','required minlength="10"')}<button type="submit" class="btn wide">Register central account</button></form></div>`)+
+ (c.connected && c.role==='admin'?`<div class="card"><h2>Invite a central staff member</h2><p>Single-use invitation expires in 7 days. Share it privately.</p>${button('Generate central staff invitation','central-invite')}${centralInvite?`<div class="codebox" style="margin-top:12px">${esc(centralInvite)}</div><small>Copy this code now; it won't appear again.</small>`:''}</div>`:'')+
+ `<div class="card"><h2>What is still separate?</h2><p>Phone-local sign-in, Google Drive authorization and the central staff account are currently separate. One administrator-controlled Google Drive account and full two-way background synchronization will be added in a later release.</p></div>`);
+}
 function settings(){
  refreshData();const driveState=api("driveStatus"),signing=api("appSigning");layout('settings','Local storage and honest integration status. No external website URL is required.',
- `<div class="card"><h2>Application</h2><div class="list-item row between"><div><strong>Android offline app v2.1</strong><br><small>Package: lk.skilltech.prayer</small></div><span class="pill ok">Local</span></div><div class="list-item"><strong>Students</strong><br><small>${people.length} stored in this phone's SQLite database</small></div><div class="list-item"><strong>Prayer times</strong><br><small>Persist locally until an admin saves a change</small></div><div class="buttons" style="margin-top:12px">${button('Export students','export',{style:'secondary'})}${button('Sign out','logout',{style:'subtle'})}</div></div>`+
- `<div class="card"><h2>Google Drive connection</h2><p>Authorize your Google account and upload one harmless test file. This does NOT upload attendance or fingerprints yet.</p>
+ `<div class="card"><h2>Application</h2><div class="list-item row between"><div><strong>Android offline app v3.0 preview</strong><br><small>Package: lk.skilltech.prayer</small></div><span class="pill ok">Local</span></div><div class="list-item"><strong>Students</strong><br><small>${people.length} stored in this phone's SQLite database</small></div><div class="list-item"><strong>Prayer times</strong><br><small>Persist locally until an admin saves a change</small></div><div class="buttons" style="margin-top:12px">${button('Export students','export',{style:'secondary'})}${button('Sign out','logout',{style:'subtle'})}</div></div>`+
+ `<div class="card"><h2>Google Drive connection</h2><p>Your account can authorize test files and encrypted, manually requested attendance backups. Automatic synchronization and fingerprint-template backups are not available yet.</p>
  <div class="list-item row between"><div><strong>Google Drive access</strong><br><small>${driveState.authorizedBefore?'Previously authorized on this phone':'Not authorized yet'}</small></div><span class="pill ${driveState.authorizedBefore?'ok':'warn'}">${driveState.authorizedBefore?'Previously allowed':'Not connected'}</span></div>
  <div class="list-item"><strong>Last successful test:</strong><br><small>${driveState.lastTestAt?dateText(driveState.lastTestAt):'No successful test upload yet'}</small></div>
  ${driveState.lastFileId?`<div class="list-item"><small>Last uploaded Google file ID: ${esc(driveState.lastFileId)}</small></div>`:''}
  ${driveState.lastError?`<div class="warnbox">${esc(driveState.lastError)}</div>`:''}
  ${auth.admin?`<div class="buttons">${button(driveState.authorizedBefore?'Test Google Drive again':'Connect Google Drive & upload test','drive-connect')}</div>`:'<div class="warnbox">Ask an administrator to connect Google Drive.</div>'}
  <div class="footer-note">Google will show its own consent screen. We never request your Gmail password or store OAuth access tokens. Requires Google Play services, Google Cloud OAuth setup, and internet.</div></div>`+
+ `<div class="card"><h2>Manual encrypted attendance backup</h2><p>Back up students, attendance, prayer schedules, special events, and correction/audit history. The file is encrypted on your phone before upload.</p>
+ <div class="list-item"><strong>Last successful backup:</strong><br><small>${driveState.lastBackupAt?dateText(driveState.lastBackupAt):'No attendance backup uploaded yet'}</small></div>
+ ${driveState.lastBackupName?`<div class="list-item"><small>Google file: ${esc(driveState.lastBackupName)}</small></div>`:''}
+ ${auth.admin?`<form id="drive-backup-form">
+ ${field('Create a backup recovery password (12–128 characters)','password','','password','required minlength="12" maxlength="128" autocomplete="off"')}
+ ${field('Confirm backup recovery password','confirm','','password','required minlength="12" maxlength="128" autocomplete="off"')}
+ <button type="submit" class="btn wide">Encrypt &amp; back up to Google Drive</button></form>`:'<div class="warnbox">Only an administrator can back up attendance records.</div>'}
+ <div class="warnbox">Write down your backup recovery password and store it securely. It cannot be recovered by the app. This version provides an encrypted archive plus a PC recovery tool; it does not yet restore backups directly into the Android app or synchronize multiple staff phones.</div>
+ <div class="footer-note">The file excludes staff password hashes, Google tokens, and fingerprint templates. Your existing local records are not deleted or overwritten.</div></div>`+
  `<div class="card"><h2>Google Cloud Android configuration</h2>
  <p>Enter these exact values when creating an Android OAuth client in Google Cloud:</p>
  <div class="list-item"><small>Android package name</small><br><strong>${esc(signing.package)}</strong></div>
  <div class="list-item"><small>Installed APK certificate SHA-1</small><br><code style="display:block;word-break:break-all;user-select:text">${esc(signing.sha1)}</code></div>
  <div class="buttons">${button('Copy APK SHA-1','copy-signing',{style:'secondary'})}</div>
- <div class="warnbox">GitHub's default debug signing key can change between builds. For Google OAuth to keep working after APK updates, use the same signing key for every build. This app currently only tests Drive connectivity.</div></div>`+
+ <div class="warnbox">GitHub debug signing keys may change if the cached key is lost. Keep the same signing key for APK updates; otherwise Android updates and Google OAuth may fail.</div></div>`+
  `<div class="card"><h2>Hardware roadmap</h2><div class="list-item row between"><div><strong>R503Pro / ESP32</strong><br><small>Continuous AutoIdentify, 6+6 enrollment</small></div><span class="pill gray">Not integrated</span></div><div class="list-item row between"><div><strong>8GB microSD card</strong><br><small>Device-side offline scan history</small></div><span class="pill gray">Not integrated</span></div><div class="list-item row between"><div><strong>TFT + buzzer + DS3231</strong><br><small>Embedded device firmware</small></div><span class="pill gray">Planned</span></div></div>
- <div class="warnbox">Attendance data stays local until a separate, verified backup-and-restore workflow is implemented. A successful connection test does not mean backups or multi-phone synchronization are working.</div>`);
+ <div class="warnbox">Encrypted manual attendance backups can be uploaded to Drive. Automatic sync, Android restore, fingerprint template export and multi-phone account sharing are not yet implemented.</div>`);
 }
-function go(name){try{switch(name){case'dashboard':dashboard();break;case'students':students();break;case'mark':markPage();break;case'schedule':schedulePage();break;case'events':editEvent=null;eventPage();break;case'reports':reports();break;case'staff':if(auth.admin)staffPage();else dashboard();break;case'settings':settings();break;default:dashboard();}}catch(err){showToast(err.message);}}
+function go(name){try{switch(name){case'dashboard':dashboard();break;case'students':students();break;case'mark':markPage();break;case'schedule':schedulePage();break;case'events':editEvent=null;eventPage();break;case'reports':reports();break;case'staff':if(auth.admin)staffPage();else dashboard();break;case'cloud':cloudPage();break;case'settings':settings();break;default:dashboard();}}catch(err){showToast(err.message);}}
 document.addEventListener('click',e=>{let b=e.target.closest('[data-act]');if(b){let action=b.dataset.act,id=b.dataset.id;try{
- if(['dashboard','students','mark','schedule','events','reports','staff','settings'].includes(action)){go(action);return;}
+ if(['dashboard','students','mark','schedule','events','reports','staff','cloud','settings'].includes(action)){go(action);return;}
  switch(action){
  case 'login-page':access('login');break;case'signup-page':access('signup');break;
  case 'logout':api('lock');access();break;
+ case 'central-refresh':api('centralRefresh');showToast('Loading central overview…');break;
+ case 'central-upload':if(confirm('Upload local records to the central institution server? Conflicts will stop, not overwrite records.')){api('centralUpload');showToast('Uploading…');}break;
+ case 'central-invite':api('centralInvite');showToast('Generating central invitation…');break;
+ case 'central-disconnect':api('centralLogout');centralInvite='';cloudPage();break;
  case 'drive-connect':api('driveConnect');showToast('Opening Google Drive authorization…');break;
  case 'copy-signing':api('copySigning');showToast('SHA-1 copied to clipboard.');break;
  case 'student-add':if(auth.admin)studentEditor();break;
@@ -172,11 +206,29 @@ document.addEventListener('click',e=>{let b=e.target.closest('[data-act]');if(b)
 document.addEventListener('submit',e=>{e.preventDefault();let form=e.target,d=Object.fromEntries(new FormData(form));try{switch(form.id){
  case 'login':api('login',{...d,remember:d.remember==='on'});lastInvite='';refreshData();dashboard();break;
  case 'signup':if(d.password!==d.confirm)throw Error('Passwords do not match.');let r=api('signup',d);access('login');showToast(r);break;
+ case 'central-login-form':centralFeedback='';api('centralLogin',d);form.elements.namedItem('password').value='';showToast('Contacting institution server…');break;
+ case 'central-register-form':centralFeedback='';api('centralRegister',d);form.elements.namedItem('password').value='';showToast('Registering with invitation…');break;
+ case 'drive-backup-form':
+   if(d.password!==d.confirm)throw Error('Backup passwords do not match.');
+   if(d.password.length<12||d.password.length>128)throw Error('Use a recovery password of 12–128 characters.');
+   if(!confirm('Upload an ENCRYPTED copy of student and attendance data to the authorized Google Drive account? Keep the recovery password safe.'))break;
+   api('driveBackup',{password:d.password});
+   form.reset();
+   showToast('Preparing encrypted attendance backup…');
+   break;
  case 'student-save':if(!auth.admin)throw Error('Admin only.');api('save',{...d,id:editStudent?.id||'',active:d.active==='1'});students();showToast('Student saved.');break;
  case 'attendance-mark':api('attendanceMark',d);markPage(d.session_date);showToast('Attendance saved and correction logged.');break;
  case 'event-save':api('eventSave',{...d,id:editEvent?.id||'',late_minutes:Number(d.late_minutes)});editEvent=null;eventPage();showToast('Special event saved.');break;
  }}catch(err){showToast(err.message);}});
 document.addEventListener('submit',e=>{if(!e.target.classList.contains('schedule-form'))return;e.preventDefault();try{let d=Object.fromEntries(new FormData(e.target));api('scheduleSave',{...d,prayer:e.target.dataset.prayer,late_minutes:Number(d.late_minutes)});schedulePage();showToast('Schedule saved permanently.');}catch(err){showToast(err.message);}});
+window.onCentralUpdate=(event,data)=>{
+ if(event==='invite'){centralInvite=data.code;centralFeedback='Invitation generated; share it securely.';}
+ else if(event==='error'){centralFeedback=data.message||'Cloud error';}
+ else if(event==='progress'||event==='uploaded'||event==='registered'){centralFeedback=data.message||'Cloud update';}
+ else if(event==='success'){centralFeedback=data.message||'Success';}
+ if(page==='cloud')cloudPage();
+ if(data.message&&event!=='status')showToast(data.message);
+};
 window.onDriveUpdate=(message,success)=>{if(page==='settings'){settings();}showToast(message);};
 window.back=()=>{if(page==='signup'){access('login');return true;}if(page==='login')return false;if(page==='dashboard')return false;dashboard();return true;};
 window.refreshRoster=()=>{if(page==='students')students();else if(page==='dashboard')dashboard();};

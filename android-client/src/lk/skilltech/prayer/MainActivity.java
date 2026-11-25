@@ -34,6 +34,7 @@ public class MainActivity extends Activity {
     private StaffAccounts staff;
     private AttendanceStore attendance;
     private DriveConnection drive;
+    private CentralSync central;
     private String exportFrom="",exportTo="";
     private boolean choosingDocument;
     private long backgroundAt;
@@ -61,7 +62,12 @@ public class MainActivity extends Activity {
         staff=new StaffAccounts(store.getWritableDatabase(),prefs);
         attendance=new AttendanceStore(store.getWritableDatabase(),staff);
         drive=new DriveConnection(this,prefs,(message,success)->{
-            if(!isDestroyed())web.evaluateJavascript("window.onDriveUpdate && window.onDriveUpdate("+JSONObject.quote(message)+","+success+")",null);
+            if(!isDestroyed() && web!=null)
+                web.evaluateJavascript("window.onDriveUpdate && window.onDriveUpdate("+JSONObject.quote(message)+","+success+")",null);
+        },passphrase->new BackupArchive(store.getReadableDatabase()).create(getCacheDir(),passphrase));
+        central=new CentralSync(this,store,prefs,(event,data)->{
+            if(!isDestroyed() && web!=null)web.evaluateJavascript(
+                "window.onCentralUpdate && window.onCentralUpdate("+JSONObject.quote(event)+","+data.toString()+")",null);
         });
         getWindow().setStatusBarColor(Color.rgb(17,45,72));
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
@@ -125,10 +131,24 @@ public class MainActivity extends Activity {
                 requireUnlock();
                 switch(action){
                 case "list":return pack(roster(),null);
+                case "centralStatus":return pack(central.status(),null);
+                case "centralLogin":central.login(d.getString("server"),d.getString("username"),d.getString("password"));return pack(true,null);
+                case "centralRegister":central.register(d.getString("server"),d.getString("username"),d.getString("password"),d.getString("code"));return pack(true,null);
+                case "centralLogout":central.logout();return pack(true,null);
+                case "centralInvite":central.invite();return pack(true,null);
+                case "centralRefresh":central.refresh();return pack(true,null);
+                case "centralUpload":central.upload();return pack(true,null);
                 case "driveStatus":return pack(drive.status(),null);
                 case "driveConnect":
                     if(!staff.state().optBoolean("admin",false))throw new IllegalStateException("Administrator access required.");
                     runOnUiThread(()->drive.connectAndTest());return pack(true,null);
+                case "driveBackup":
+                    if(!staff.state().optBoolean("admin",false))throw new IllegalStateException("Administrator access required.");
+                    String password=d.getString("password");
+                    if(password.length()<12||password.length()>128)
+                        throw new IllegalArgumentException("Backup password must be 12–128 characters.");
+                    runOnUiThread(()->drive.backup(password.toCharArray()));
+                    return pack(true,null);
                 case "appSigning":return pack(new JSONObject().put("package",getPackageName()).put("sha1",appSha1()),null);
                 case "copySigning":runOnUiThread(()->{android.content.ClipboardManager c=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);c.setPrimaryClip(android.content.ClipData.newPlainText("Smart Prayer SHA-1",appSha1()));toast("APK SHA-1 copied.");});return pack(true,null);
                 case "overview":return pack(attendance.overview(),null);

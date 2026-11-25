@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="lk.skilltech.prayer" android:versionCode="4" android:versionName="2.1">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="lk.skilltech.prayer" android:versionCode="6" android:versionName="3.0-preview">
   <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/>
   <uses-permission android:name="android.permission.INTERNET"/>
   <application android:label="Smart Prayer Attendance" android:icon="@drawable/icon" android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
