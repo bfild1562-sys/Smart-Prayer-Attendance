@@ -8,6 +8,8 @@ import android.util.JsonReader;
 import android.util.JsonToken;
 import android.util.JsonWriter;
 import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -28,7 +30,6 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import javax.crypto.Cipher;
-import javax.crypto.CipherInputStream;
 import javax.crypto.CipherOutputStream;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.GCMParameterSpec;
@@ -387,20 +388,48 @@ final class BackupArchive {
     }
 
     private static InputStream openDecrypted(File archive,char[] passphrase)throws Exception{
+        long length=archive.length();
+        // A bounded authenticated decrypt keeps memory use predictable on phones.
+        // Most 4-month attendance snapshots are far smaller after gzip compression.
+        if(length>64L*1024L*1024L)throw new IllegalArgumentException("This encrypted backup is larger than the 64 MB restore limit.");
         DataInputStream input=new DataInputStream(new BufferedInputStream(new FileInputStream(archive)));
+        byte[] encrypted=null,compressed=null,key=null;
         try{
             byte[] magic=new byte[8],salt=new byte[16],nonce=new byte[12];
             input.readFully(magic);input.readFully(salt);input.readFully(nonce);
             if(!Arrays.equals(magic,MAGIC))throw new IllegalArgumentException("This is not a Smart Prayer .spab backup.");
+            int encryptedLength=(int)(length-36L);
+            if(encryptedLength<16)throw new IllegalArgumentException("Encrypted backup is incomplete.");
+            encrypted=new byte[encryptedLength];
+            input.readFully(encrypted);
+            if(input.read()!=-1)throw new IllegalArgumentException("Backup contains unexpected trailing bytes.");
             PBEKeySpec spec=new PBEKeySpec(passphrase,salt,ITERATIONS,256);
-            byte[] key;
             try{key=SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded();}
             finally{spec.clearPassword();}
             Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");
-            try{cipher.init(Cipher.DECRYPT_MODE,new SecretKeySpec(key,"AES"),new GCMParameterSpec(128,nonce));}
-            finally{Arrays.fill(key,(byte)0);}
-            return new GZIPInputStream(new CipherInputStream(input,cipher),32768);
-        }catch(Exception e){try{input.close();}catch(Exception ignored){}throw e;}
+            cipher.init(Cipher.DECRYPT_MODE,new SecretKeySpec(key,"AES"),new GCMParameterSpec(128,nonce));
+            // doFinal verifies the GCM authentication tag before JSON is parsed or imported.
+            compressed=cipher.doFinal(encrypted);
+            return new GZIPInputStream(new WipingByteArrayInputStream(compressed),32768);
+        }catch(javax.crypto.AEADBadTagException e){
+            if(compressed!=null)Arrays.fill(compressed,(byte)0);
+            throw new IllegalArgumentException("Wrong recovery password or damaged backup.",e);
+        }catch(Exception e){
+            if(compressed!=null)Arrays.fill(compressed,(byte)0);
+            throw e;
+        }finally{
+            try{input.close();}catch(Exception ignored){}
+            if(encrypted!=null)Arrays.fill(encrypted,(byte)0);
+            if(key!=null)Arrays.fill(key,(byte)0);
+        }
+    }
+
+    private static final class WipingByteArrayInputStream extends ByteArrayInputStream {
+        WipingByteArrayInputStream(byte[] bytes){super(bytes);}
+        @Override public void close(){
+            Arrays.fill(buf,(byte)0);
+            super.reset();
+        }
     }
 
     private static void checkPassword(char[] passphrase){
