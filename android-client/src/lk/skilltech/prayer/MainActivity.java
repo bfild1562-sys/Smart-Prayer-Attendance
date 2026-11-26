@@ -263,7 +263,6 @@ public class MainActivity extends Activity {
         Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/octet-stream","application/x-smart-prayer-backup"});
         intent.putExtra(Intent.EXTRA_TITLE,"Choose Smart Prayer encrypted backup (.spab)");
         try{
             choosingDocument=true;
@@ -315,7 +314,7 @@ public class MainActivity extends Activity {
                     int count;
                     while((count=input.read(buffer))!=-1){
                         copied+=count;
-                        if(copied>256L*1024L*1024L)throw new IOException("Backup file is larger than the 256 MB safety limit.");
+                        if(copied>64L*1024L*1024L)throw new IOException("Backup file is larger than the 64 MB safety limit.");
                         output.write(buffer,0,count);
                     }
                     output.flush();
