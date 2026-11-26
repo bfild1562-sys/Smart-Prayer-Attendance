@@ -16,6 +16,7 @@ import java.io.FileInputStream;
 import java.io.FilterInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -166,6 +167,11 @@ final class BackupArchive {
         });
         metadata.tables.addAll(parsed.tables);
         return restoreAuthenticated(archive,db,passphrase,restoringStaffId,metadata);
+    }
+
+    private static void addFallbackStaff(ArchiveMetadata metadata,String id){
+        if(metadata!=null&&id!=null&&!id.isEmpty()&&!metadata.staffNames.containsKey(id))
+            metadata.staffNames.put(id,"Archived staff");
     }
 
     private static RestoreResult restoreAuthenticated(File archive,SQLiteDatabase db,char[] passphrase,String restoringStaffId,ArchiveMetadata metadata)throws Exception{
