@@ -9,6 +9,11 @@ def signingStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
 def signingKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
 def signingKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
 
+// Resolve the build number outside the Android DSL closure.
+// GitHub Actions run numbers are increasing; local builds use 9.
+def githubRunNumber = System.getenv('GITHUB_RUN_NUMBER')
+def appVersionCode = githubRunNumber != null ? Integer.parseInt(githubRunNumber) : 9
+
 android {
     namespace 'lk.skilltech.prayer'
     compileSdk 35
@@ -32,9 +37,7 @@ android {
         applicationId 'lk.skilltech.prayer'
         minSdk 26
         targetSdk 35
-        // GitHub run numbers rise automatically, preventing versionCode
-        // from blocking Android updates. Local builds fall back to 9.
-        versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '9').toInteger()
+        versionCode = appVersionCode
         versionName '4.1.1'
     }
 
