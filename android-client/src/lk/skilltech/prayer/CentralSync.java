@@ -2,6 +2,7 @@ package lk.skilltech.prayer;
 
 import android.app.Activity;
 import android.database.Cursor;
+import android.content.ContentValues;
 import android.database.sqlite.SQLiteDatabase;
 import android.content.SharedPreferences;
 import java.io.*;
@@ -23,6 +24,8 @@ final class CentralSync {
     private volatile String token="", role="", username="", error="";
     private volatile boolean busy=false;
     private volatile JSONObject lastSummary;
+    private volatile JSONArray devices = new JSONArray();
+    private volatile JSONObject institutionDrive = new JSONObject();
     private String server="";
 
     CentralSync(Activity activity, MainActivity.Store store, SharedPreferences prefs, Callback callback) {
@@ -33,6 +36,7 @@ final class CentralSync {
         JSONObject j=new JSONObject().put("server",server).put("connected",!token.isEmpty())
             .put("username",username).put("role",role).put("busy",busy).put("error",error);
         if(lastSummary!=null)j.put("summary",lastSummary);
+        j.put("devices",devices);j.put("institution_drive",institutionDrive);
         return j;
     }
     private void emit(String ev,String message) {
@@ -99,6 +103,7 @@ final class CentralSync {
             JSONObject sum=request(server,"/api/v1/summary",null,token);
             lastSummary=sum;
             emit("summary",sum);
+            pull();refreshAdminMetadata();
         });
     }
     void register(String base,String user,String password,String invite){
@@ -117,7 +122,98 @@ final class CentralSync {
     }
     void logout(){token="";role="";username="";lastSummary=null;error="";emit("status","Central session disconnected from this phone.");}
     void refresh(){
-        asynchronous("Cloud overview",()->{requireLogin();lastSummary=request(server,"/api/v1/summary",null,token);emit("summary",lastSummary);});
+        asynchronous("Cloud overview",()->{requireLogin();lastSummary=request(server,"/api/v1/summary",null,token);pull();refreshAdminMetadata();emit("summary",lastSummary);});
+    }
+    void requestSync(){ if(!token.isEmpty() && !busy) upload(); }
+    JSONArray deviceList(){return devices;}
+    void createDevice(String name){
+        asynchronous("Device registration",()->{
+            requireAdmin();
+            JSONObject info=request(server,"/api/v1/devices",new JSONObject().put("name",name),token);
+            emit("deviceCreated",info);refreshAdminMetadata();
+            // The key is displayed ONCE and never stored in the app.
+        });
+    }
+    private void refreshAdminMetadata(){
+        if(!"admin".equals(role))return;
+        try {
+            devices=request(server,"/api/v1/devices",null,token).getJSONArray("devices");
+            institutionDrive=request(server,"/api/v1/admin/drive/status",null,token);
+        }catch(Exception ignored){ /* Existing attendance remains usable if admin metadata fails */ }
+    }
+    void connectInstitutionDrive(){
+        asynchronous("Institution Google Drive authorization",()->{
+            requireAdmin();
+            String url=request(server,"/api/v1/admin/drive/start",new JSONObject(),token).getString("authorization_url");
+            if(!url.startsWith("https://accounts.google.com/"))throw new IllegalArgumentException("Unexpected Google sign-in URL");
+            activity.runOnUiThread(()->{
+                android.content.Intent intent=new android.content.Intent(android.content.Intent.ACTION_VIEW,android.net.Uri.parse(url));
+                activity.startActivity(intent);
+            });
+            emit("progress","Google authorization opened in your browser. Return here after consent.");
+        });
+    }
+    void backupInstitutionDrive(){
+        asynchronous("Institution Google Drive backup",()->{
+            requireAdmin();
+            JSONObject info=request(server,"/api/v1/admin/drive/backup",new JSONObject(),token);
+            emit("progress",info);
+            refreshAdminMetadata();
+        });
+    }
+    private static ContentValues values(JSONObject obj)throws JSONException{
+        ContentValues cv=new ContentValues();
+        for(java.util.Iterator<String> it=obj.keys();it.hasNext();){
+            String k=it.next();Object value=obj.opt(k);
+            if(value==null || value==JSONObject.NULL)cv.putNull(k);
+            else if(value instanceof Integer)cv.put(k,(Integer)value);
+            else if(value instanceof Long)cv.put(k,(Long)value);
+            else if(value instanceof Boolean)cv.put(k,(Boolean)value ? 1:0);
+            else cv.put(k,String.valueOf(value));
+        }
+        return cv;
+    }
+    private void pull()throws Exception {
+        JSONObject snapshot=request(server,"/api/v1/sync/snapshot",null,token);
+        SQLiteDatabase db=store.getWritableDatabase();
+        int received=0;
+        db.beginTransaction();
+        try {
+            JSONArray students=snapshot.getJSONArray("students");
+            for(int i=0;i<students.length();i++){
+                JSONObject data=students.getJSONObject(i);
+                db.insertWithOnConflict("students",null,values(data),SQLiteDatabase.CONFLICT_IGNORE);
+                db.update("students",values(data),"id=?",new String[]{data.getString("id")});
+                received++;
+            }
+            JSONArray schedules=snapshot.getJSONArray("schedules");
+            for(int i=0;i<schedules.length();i++){
+                JSONObject data=schedules.getJSONObject(i);
+                db.update("prayer_schedule",values(data),"prayer=? AND updated_at < ?",
+                    new String[]{data.getString("prayer"),String.valueOf(data.getLong("updated_at"))});
+            }
+            JSONArray events=snapshot.getJSONArray("events");
+            for(int i=0;i<events.length();i++){
+                JSONObject data=events.getJSONObject(i);
+                ContentValues values=values(data);
+                // created_by is mandatory locally, but not part of shared event response.
+                values.put("created_by","central");
+                db.insertWithOnConflict("special_events",null,values,SQLiteDatabase.CONFLICT_IGNORE);
+                db.update("special_events",values(data),"id=? AND updated_at < ?",
+                    new String[]{data.getString("id"),String.valueOf(data.getLong("updated_at"))});
+            }
+            JSONArray rows=snapshot.getJSONArray("attendance");
+            for(int i=0;i<rows.length();i++){
+                JSONObject data=rows.getJSONObject(i);
+                ContentValues record=values(data);
+                db.insertWithOnConflict("attendance",null,record,SQLiteDatabase.CONFLICT_IGNORE);
+                // Recent, trusted server updates (manual corrections) supersede older local copies.
+                db.update("attendance",record,"id=? AND recorded_at < ?",
+                   new String[]{data.getString("id"),String.valueOf(data.getLong("recorded_at"))});
+            }
+            db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
+        emit("progress",new JSONObject().put("message","Cloud data refreshed: "+received+" students checked."));
     }
     private void requireLogin(){if(token.isEmpty())throw new IllegalStateException("Log in to the central server first.");}
     private void requireAdmin(){requireLogin();if(!"admin".equals(role))throw new IllegalStateException("Central administrator account required.");}
@@ -142,7 +238,7 @@ final class CentralSync {
             requireLogin();
             SQLiteDatabase db=store.getReadableDatabase();
             String[][] collections={
-                {"students","SELECT id,admission,name,group_name,enrolled,active FROM students ORDER BY id"},
+                {"students","SELECT id,admission,name,group_name,enrolled,active,fingerprint_number FROM students ORDER BY id"},
                 {"schedules","SELECT prayer,opens,deadline,ends,late_minutes,updated_at FROM prayer_schedule ORDER BY prayer"},
                 {"events","SELECT id,title,event_date,opens,deadline,ends,late_minutes,group_name,active,updated_at FROM special_events ORDER BY id"},
                 {"attendance","SELECT id,student_id,session_key,session_date,status,source,changed_by,recorded_at,note FROM attendance ORDER BY id"}
@@ -161,6 +257,7 @@ final class CentralSync {
                 }
             }
             lastSummary=request(server,"/api/v1/summary",null,token);
+            pull();refreshAdminMetadata();
             emit("summary",lastSummary);
             emit("uploaded",new JSONObject().put("message","Upload finished; "+synced+" rows checked. Conflicts are never silently overwritten."));
         });

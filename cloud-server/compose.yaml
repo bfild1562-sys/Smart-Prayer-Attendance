@@ -4,6 +4,10 @@ services:
     restart: unless-stopped
     environment:
       SPA_DATABASE: /data/central.sqlite3
+      SPA_PUBLIC_URL: https://${SPA_DOMAIN}
+      SPA_GOOGLE_CLIENT_ID: ${SPA_GOOGLE_CLIENT_ID:-}
+      SPA_GOOGLE_CLIENT_SECRET: ${SPA_GOOGLE_CLIENT_SECRET:-}
+      SPA_TOKEN_KEY: ${SPA_TOKEN_KEY:-}
     volumes:
       - central_data:/data
     expose:

@@ -38,20 +38,27 @@ public class MainActivity extends Activity {
     private String exportFrom="",exportTo="";
     private boolean choosingDocument;
     private long backgroundAt;
+    private final android.os.Handler syncHandler=new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable foregroundSync=new Runnable(){
+        public void run(){if(central!=null && staff!=null && staff.signedIn())central.requestSync();syncHandler.postDelayed(this,120000);}
+    };
     private static final int EXPORT=100, IMPORT=101, EXPORT_ATTENDANCE=102;
 
     static final class Store extends SQLiteOpenHelper {
-        Store(Context c){super(c,"students.sqlite",null,3);}
+        Store(Context c){super(c,"students.sqlite",null,4);}
         public void onCreate(SQLiteDatabase db){
             db.execSQL("CREATE TABLE students(id TEXT PRIMARY KEY, admission TEXT COLLATE NOCASE UNIQUE NOT NULL, name TEXT NOT NULL, group_name TEXT NOT NULL, enrolled TEXT NOT NULL, active INTEGER NOT NULL)");
             StaffAccounts.schema(db);
             StaffAccounts.invitationSchema(db);
             AttendanceStore.schema(db);
+            db.execSQL("ALTER TABLE students ADD COLUMN fingerprint_number INTEGER");
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_students_fp_num ON students(fingerprint_number) WHERE fingerprint_number IS NOT NULL");
         }
         public void onUpgrade(SQLiteDatabase db,int from,int to){
-            if(from<1||from>3||to!=3)throw new IllegalStateException("Unsupported database version");
+            if(from<1||from>4||to!=4)throw new IllegalStateException("Unsupported database version");
             if(from==1)StaffAccounts.schema(db);
             if(from<=2){StaffAccounts.invitationSchema(db);AttendanceStore.schema(db);}
+            if(from<=3){db.execSQL("ALTER TABLE students ADD COLUMN fingerprint_number INTEGER");db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_students_fp_num ON students(fingerprint_number) WHERE fingerprint_number IS NOT NULL");}
         }
     }
 
@@ -88,9 +95,9 @@ public class MainActivity extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){
                 String url=r.getUrl().toString();
-                String file=url.equals(HOME)?"index.html":url.equals(HOME+"app.js")?"app.js":url.equals(HOME+"style.css")?"style.css":null;
+                String file=url.equals(HOME)?"index.html":url.equals(HOME+"app.js")?"app.js":url.equals(HOME+"style.css")?"style.css":url.equals(HOME+"mosque.png")?"mosque.png":null;
                 if(file!=null)try{
-                    return new WebResourceResponse(file.endsWith(".html")?"text/html":file.endsWith(".js")?"application/javascript":"text/css","UTF-8",getAssets().open(file));
+                    return new WebResourceResponse(file.endsWith(".html")?"text/html":file.endsWith(".js")?"application/javascript":file.endsWith(".png")?"image/png":"text/css","UTF-8",getAssets().open(file));
                 }catch(IOException ignored){}
                 return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));
             }
@@ -99,10 +106,10 @@ public class MainActivity extends Activity {
         web.loadUrl(HOME);
     }
 
-    @Override public void onStop(){super.onStop();backgroundAt=android.os.SystemClock.elapsedRealtime();}
-    @Override public void onStart(){super.onStart();if(staff.signedIn() && !staff.remembered() && !choosingDocument && backgroundAt!=0 && android.os.SystemClock.elapsedRealtime()-backgroundAt>60000){staff.logout();web.reload();}}
+    @Override public void onStop(){syncHandler.removeCallbacks(foregroundSync);super.onStop();backgroundAt=android.os.SystemClock.elapsedRealtime();}
+    @Override public void onStart(){super.onStart();syncHandler.removeCallbacks(foregroundSync);syncHandler.postDelayed(foregroundSync,15000);if(staff.signedIn() && !staff.remembered() && !choosingDocument && backgroundAt!=0 && android.os.SystemClock.elapsedRealtime()-backgroundAt>60000){staff.logout();web.reload();}}
     @Override public void onBackPressed(){web.evaluateJavascript("window.back ? window.back() : false",v->{if(!"true".equals(v))super.onBackPressed();});}
-    @Override public void onDestroy(){web.removeJavascriptInterface("Phone");web.destroy();store.close();super.onDestroy();}
+    @Override public void onDestroy(){syncHandler.removeCallbacks(foregroundSync);web.removeJavascriptInterface("Phone");web.destroy();store.close();super.onDestroy();}
 
     private void requireUnlock(){if(!staff.signedIn())throw new IllegalStateException("Unlock the register first.");}
     static byte[] hash(String pass,byte[] salt) throws Exception{
@@ -138,6 +145,10 @@ public class MainActivity extends Activity {
                 case "centralInvite":central.invite();return pack(true,null);
                 case "centralRefresh":central.refresh();return pack(true,null);
                 case "centralUpload":central.upload();return pack(true,null);
+                case "centralCreateDevice":central.createDevice(d.getString("name"));return pack(true,null);
+                case "centralDeviceList":return pack(central.deviceList(),null);
+                case "centralDriveConnect":central.connectInstitutionDrive();return pack(true,null);
+                case "centralDriveBackup":central.backupInstitutionDrive();return pack(true,null);
                 case "driveStatus":return pack(drive.status(),null);
                 case "driveConnect":
                     if(!staff.state().optBoolean("admin",false))throw new IllegalStateException("Administrator access required.");
@@ -153,11 +164,11 @@ public class MainActivity extends Activity {
                 case "copySigning":runOnUiThread(()->{android.content.ClipboardManager c=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);c.setPrimaryClip(android.content.ClipData.newPlainText("Smart Prayer SHA-1",appSha1()));toast("APK SHA-1 copied.");});return pack(true,null);
                 case "overview":return pack(attendance.overview(),null);
                 case "schedules":return pack(attendance.schedules(),null);
-                case "scheduleSave":attendance.saveSchedule(d);return pack(true,null);
+                case "scheduleSave":attendance.saveSchedule(d);central.requestSync();return pack(true,null);
                 case "events":return pack(attendance.events(),null);
-                case "eventSave":attendance.saveEvent(d);return pack(true,null);
+                case "eventSave":attendance.saveEvent(d);central.requestSync();return pack(true,null);
                 case "eventCancel":attendance.cancelEvent(d);return pack(true,null);
-                case "attendanceMark":attendance.mark(d);return pack(true,null);
+                case "attendanceMark":attendance.mark(d);central.requestSync();return pack(true,null);
                 case "attendanceList":return pack(attendance.attendance(d),null);
                 case "attendanceAudit":return pack(attendance.audit(d),null);
                 case "inviteGenerate":return pack(staff.generateInvite(),null);
@@ -166,7 +177,7 @@ public class MainActivity extends Activity {
                 case "staffList":return pack(staff.members(),null);
                 case "staffAccess":staff.setAccess(d.getString("id"),d.optBoolean("active"));return pack(true,null);
                 case "attendanceExport":exportFrom=d.optString("from","");exportTo=d.optString("to","");runOnUiThread(()->pickAttendance());return pack(true,null);
-                case "save":save(d,staff.identity());return pack(true,null);
+                case "save":save(d,staff.identity());central.requestSync();return pack(true,null);
                 case "export":case "import":
                     runOnUiThread(()->pick(action.equals("export")));return pack(true,null);
                 default:throw new IllegalArgumentException("Unknown operation.");
@@ -197,11 +208,11 @@ public class MainActivity extends Activity {
 
     private JSONArray roster() throws JSONException{
         JSONArray result=new JSONArray();
-        try(Cursor c=store.getReadableDatabase().rawQuery("SELECT id,admission,name,group_name,enrolled,active FROM students ORDER BY name COLLATE NOCASE,admission",null)){
+        try(Cursor c=store.getReadableDatabase().rawQuery("SELECT id,admission,name,group_name,enrolled,active,fingerprint_number FROM students ORDER BY name COLLATE NOCASE,admission",null)){
             while(c.moveToNext()){
                 JSONObject s=new JSONObject();
                 for(int i=0;i<5;i++)s.put(c.getColumnName(i),c.getString(i));
-                s.put("active",c.getInt(5)==1);result.put(s);
+                s.put("active",c.getInt(5)==1);s.put("fingerprint_number",c.isNull(6)?JSONObject.NULL:c.getInt(6));result.put(s);
             }
         }
         return result;
@@ -217,6 +228,9 @@ public class MainActivity extends Activity {
         String date=field(d,"enrolled",10);
         try{LocalDate.parse(date);}catch(java.time.DateTimeException e){throw new IllegalArgumentException("Choose a valid enrollment date.");}
         v.put("enrolled",date);v.put("active",d.getBoolean("active")?1:0);
+        String fn=d.optString("fingerprint_number","").trim();
+        if(fn.isEmpty())v.putNull("fingerprint_number");
+        else{try{int num=Integer.parseInt(fn);if(num<1||num>300)throw new NumberFormatException();v.put("fingerprint_number",num);}catch(NumberFormatException e){throw new IllegalArgumentException("Fingerprint number must be between 1 and 300.");}}
         SQLiteDatabase db=store.getWritableDatabase();
         db.beginTransaction();
         try{

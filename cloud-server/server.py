@@ -17,6 +17,9 @@ import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
+import device_api
+import google_drive
+import threading
 
 DATABASE = os.getenv('SPA_DATABASE', os.path.join(os.path.dirname(__file__), 'central.sqlite3'))
 SESSION_TTL = 12 * 3600
@@ -64,6 +67,8 @@ def init_db(db):
     CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,at INTEGER NOT NULL,
         actor TEXT NOT NULL,operation TEXT NOT NULL,detail TEXT NOT NULL);
     ''')
+    device_api.create_schema(db)
+    google_drive.schema(db)
 
 def now(): return int(time.time())
 def sha(v): return hashlib.sha256(v.encode('utf8')).hexdigest()
@@ -134,7 +139,8 @@ def clock(v, empty=False):
 def normalize_student(x):
     return dict(id=text(x.get('id'),'student id',80),admission=text(x.get('admission'),'admission',60),
        name=text(x.get('name'),'student name',120),group_name=text(x.get('group_name',''),'group',80,True),
-       enrolled=date(x.get('enrolled')),active=int(x.get('active',True) in (True,1,'1')))
+       enrolled=date(x.get('enrolled')),active=int(x.get('active',True) in (True,1,'1')),
+       fingerprint_number=(num(x['fingerprint_number'],'fingerprint_number',1,300) if x.get('fingerprint_number') not in ('',None) else None))
 
 def normalize_schedule(x):
     prayer=x.get('prayer')
@@ -169,15 +175,30 @@ def normalize_attendance(x):
       note=text(x.get('note',''),'note',500,True))
 
 def upsert_strict(db, table, row, pk, compare, actor):
-    cols=list(row);value=row[pk]
+    cols=list(row); value=row[pk]
     old=db.execute('SELECT * FROM '+table+' WHERE '+pk+'=?',(value,)).fetchone()
     if old:
-        if any(old[k] != row[k] for k in compare):
-            fail('Cloud conflict for '+table+' '+str(value)+'. Manual reconciliation required.',409)
-        return False
-    keys=','.join(cols);marks=','.join('?' for k in cols)
+        changed=any(old[k] != row[k] for k in compare)
+        if not changed:return False
+        # Safely accept updates to shared records. Schedule/event updates need
+        # a later version; attendance needs a later manual correction.
+        if table in ('prayer_schedule','special_events'):
+            if actor['role']!='admin' or row['updated_at']<=old['updated_at']:
+                fail('Outdated configuration update; refresh the device and retry.',409)
+        elif table=='attendance':
+            if row['recorded_at']<=old['recorded_at'] or row['source']!='MANUAL':
+                fail('Newer or fingerprint attendance exists; correction must be newer and manual.',409)
+        elif table=='students':
+            if actor['role']!='admin':fail('Only administrators can change student records',403)
+        else:fail('Unsupported update',409)
+        updates=','.join(k+'=?' for k in cols if k!=pk)
+        db.execute('UPDATE '+table+' SET '+updates+' WHERE '+pk+'=?',
+            [row[k] for k in cols if k!=pk]+[value])
+        audit(db,actor['username'],'sync_updated_'+table,str(value))
+        return True
+    keys=','.join(cols);marks=','.join('?' for _ in cols)
     try:db.execute('INSERT INTO '+table+'('+keys+') VALUES('+marks+')',[row[c] for c in cols])
-    except sqlite3.IntegrityError: fail('Cloud duplicate or missing reference in '+table+': '+str(value),409)
+    except sqlite3.IntegrityError:fail('Cloud duplicate or missing reference in '+table+': '+str(value),409)
     return True
 
 def sync_batch(db,actor,payload):
@@ -196,7 +217,7 @@ def sync_batch(db,actor,payload):
         data[k]=[normal(x) for x in a]
     if total>500:fail('Too many rows')
     counts={k:0 for k in permitted}
-    mappings={'students':('students','id',('admission','name','group_name','enrolled','active')),
+    mappings={'students':('students','id',('admission','name','group_name','enrolled','active','fingerprint_number')),
       'schedules':('prayer_schedule','prayer',('opens','deadline','ends','late_minutes')),
       'events':('special_events','id',('title','event_date','opens','deadline','ends','late_minutes','group_name','active')),
       'attendance':('attendance','id',('student_id','session_key','session_date','status','source','recorded_at','note'))}
@@ -220,11 +241,25 @@ def summary(db):
      'staff':db.execute('SELECT COUNT(*) FROM staff WHERE active=1').fetchone()[0],
      'recent':[dict(r) for r in db.execute('''SELECT a.student_id,s.name,a.session_key,a.session_date,a.status,a.recorded_at,
           a.changed_by FROM attendance a LEFT JOIN students s ON s.id=a.student_id ORDER BY a.recorded_at DESC LIMIT 30''')],
-     'schedules':[dict(r) for r in db.execute('SELECT * FROM prayer_schedule ORDER BY prayer')]
+     'schedules':[dict(r) for r in db.execute('SELECT * FROM prayer_schedule ORDER BY prayer')],
+     'recent_scans':[dict(r) for r in db.execute('SELECT * FROM device_scans ORDER BY received_at DESC LIMIT 20')]
     }
 
 def dispatch(db,method,path,body,headers):
     if method=='GET' and path=='/health':return {'status':'ok','service':'Smart Prayer Central'}
+    if method=='GET' and path.startswith('/oauth/drive/callback'):
+        try:return google_drive.callback(db,parse_qs(urlsplit(path).query))
+        except ValueError as ex: fail(str(ex),400)
+
+    if path.startswith('/api/v1/device/'):
+        try:
+            dev=device_api.device_auth(db,headers.get('Authorization',''))
+            if method=='GET' and path=='/api/v1/device/config': return device_api.current_config(db)
+            if method=='POST' and path=='/api/v1/device/scans': return device_api.accept_scans(db,dev,body.get('events'))
+            fail('Unknown device operation',404)
+        except PermissionError as ex:fail(str(ex),401)
+        except ValueError as ex:fail(str(ex),400)
+
     if method=='POST' and path=='/api/v1/login':
         u=username(body.get('username'));pwd=body.get('password','')
         user=db.execute('SELECT * FROM staff WHERE normalized=?',(u.lower(),)).fetchone()
@@ -245,6 +280,30 @@ def dispatch(db,method,path,body,headers):
         except sqlite3.IntegrityError:fail('Username already in use',409)
         return {'registered':True,'message':'Registered. Log in with your central staff account.'}
     actor=authenticate(db,headers.get('Authorization',''))
+    if path.startswith('/api/v1/admin/drive/'):
+        need_admin(actor)
+        try:
+            if method=='GET' and path=='/api/v1/admin/drive/status':return google_drive.status(db)
+            if method=='POST' and path=='/api/v1/admin/drive/start':return google_drive.begin(db,actor['id'])
+            if method=='POST' and path=='/api/v1/admin/drive/backup':return google_drive.backup(db)
+        except ValueError as ex:fail(str(ex),400)
+        fail('Unknown Google Drive operation',404)
+    if method=='POST' and path=='/api/v1/devices':
+        need_admin(actor)
+        try: return device_api.create_device(db,body.get('name'))
+        except ValueError as ex:fail(str(ex),400)
+    if method=='GET' and path=='/api/v1/devices':
+        need_admin(actor)
+        return {'devices':[dict(x) for x in db.execute('SELECT id,name,enabled,last_seen FROM devices ORDER BY name')]}
+    if method=='GET' and path=='/api/v1/device-scans':
+        return [dict(x) for x in db.execute('SELECT * FROM device_scans ORDER BY received_at DESC LIMIT 200')]
+    if method=='GET' and path=='/api/v1/sync/snapshot':
+        return {
+          'students':[dict(r) for r in db.execute('SELECT * FROM students ORDER BY id LIMIT 1500')],
+          'schedules':[dict(r) for r in db.execute('SELECT * FROM prayer_schedule')],
+          'events':[dict(r) for r in db.execute('SELECT * FROM special_events ORDER BY event_date DESC LIMIT 500')],
+          'attendance':[dict(r) for r in db.execute('SELECT * FROM attendance ORDER BY recorded_at DESC LIMIT 500')]
+        }
     if method=='GET' and path=='/api/v1/me':return {'username':actor['username'],'role':actor['role'],'id':actor['id']}
     if method=='POST' and path=='/api/v1/logout':
         with db:db.execute('DELETE FROM tokens WHERE token_hash=?',(sha(headers.get('Authorization','')[7:]),))
@@ -297,7 +356,7 @@ class Handler(BaseHTTPRequestHandler):
                 try: payload=json.loads(self.rfile.read(length).decode('utf8'))
                 except (ValueError,UnicodeError):fail('Malformed JSON')
                 if not isinstance(payload,dict):fail('JSON object required')
-            target=urlsplit(self.path).path
+            target=self.path if self.path.startswith('/oauth/drive/callback') else urlsplit(self.path).path
             result=dispatch(db,self.command,target,payload,self.headers)
             self.respond(200,{'ok':True,'data':result})
         except AppError as e:self.respond(e.status,{'ok':False,'error':e.message})
@@ -318,6 +377,17 @@ def main():
         pwd=getpass.getpass('Choose central admin password (10+ chars): ')
         db=connect();init_db(db);create_admin(db,args.username,pwd);db.close();print('Central admin created.');return
     db=connect();init_db(db);db.close()
+    def periodic_backup():
+        while True:
+            time.sleep(3600)
+            db=connect()
+            try:
+                if google_drive.status(db)['connected']:
+                    google_drive.backup(db)
+            except Exception as exc:
+                print('Google Drive automatic backup:',str(exc),file=sys.stderr)
+            finally:db.close()
+    threading.Thread(target=periodic_backup,name='DailyGoogleDriveBackup',daemon=True).start()
     if args.host!='127.0.0.1':print('WARNING: Serve behind HTTPS reverse proxy. Do not expose HTTP directly.')
     print('Smart Prayer server listening at',args.host,args.port)
     ThreadingHTTPServer((args.host,args.port),Handler).serve_forever()

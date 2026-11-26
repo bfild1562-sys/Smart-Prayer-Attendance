@@ -1,7 +1,7 @@
-# Smart Prayer Attendance Android v3.0 preview
+# Smart Prayer Attendance Android v4
 
-Existing offline UI, prayer schedules, RED MARK, manual attendance and manual encrypted Google Drive backups are retained. New optional **Cloud** tab can connect to a separately deployed Smart Prayer central server to log in staff, create invitations, upload local records manually, and view shared totals/recent attendance.
+Native Android Java app using a bundled HTML/CSS/JavaScript interface and SQLite. The launcher and login use the selected mosque icon. The app opens offline, has staff login, schedules, students, events, manual attendance, reports and cloud sync while connected.
 
-A central server address must be a real **HTTPS** URL. It is not required for normal offline app usage. No Gmail password is embedded. No automatic/two-way sync, central Google Drive admin authorization, or ESP32 hardware connection yet.
+Build via `.github/workflows/build-android.yml` from repository root. Package: `lk.skilltech.prayer`.
 
-See repository `CENTRAL_SETUP.md` for build and server deployment instructions.
+**Do not uninstall** a previously installed version before backing up local SQLite. Keep the same signing certificate for upgrades and OAuth. Use the server configuration in the root `DEPLOY_CENTRAL.md` for shared records.
