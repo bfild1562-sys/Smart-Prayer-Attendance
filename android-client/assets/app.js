@@ -171,7 +171,11 @@ function settings(){
     '<form id="drive-backup-form" style="margin-top:14px"><h3>Manual encrypted attendance backup</h3><p>Choose a recovery password of 12–128 characters. You will need this exact password to recover the backup.</p>'+
     field('Backup recovery password','password','','password','required minlength="12" maxlength="128" autocomplete="new-password"')+
     field('Confirm recovery password','confirm','','password','required minlength="12" maxlength="128" autocomplete="new-password"')+
-    '<button class="btn wide" type="submit">Encrypt & upload backup</button></form>'
+    '<button class="btn wide" type="submit">Encrypt & upload backup</button></form>'+
+    '<form id="drive-restore-form" style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px"><h3>Restore from encrypted backup</h3><p>Choose a .spab backup from Google Drive or phone storage. Existing student and attendance records are preserved; only missing records are added.</p>'+
+    field('Backup recovery password','password','','password','required minlength="12" maxlength="128" autocomplete="new-password"')+
+    field('Confirm recovery password','confirm','','password','required minlength="12" maxlength="128" autocomplete="new-password"')+
+    '<button class="btn wide secondary" type="submit">Choose backup file & restore</button></form>'
    :'<div class="warnbox">Only the administrator can connect Google Drive or create encrypted backups.</div>';
  layout('settings','Local storage, encrypted backup and device configuration.',
  '<div class="card"><h2>Application</h2><div class="list-item row between"><div><strong>Android attendance app v4.1</strong><br><small>Package: '+esc(signing.package||'lk.skilltech.prayer')+'</small></div><span class="pill ok">Local database</span></div><div class="list-item"><strong>Students</strong><br><small>'+people.length+' stored in this phone\'s SQLite database</small></div><div class="list-item"><strong>Android signing SHA-1</strong><br><small style="overflow-wrap:anywhere">'+esc(signing.sha1||'Unavailable')+'</small></div><div class="buttons" style="margin-top:12px">'+button('Export students','export',{style:'secondary'})+button('Sign out','logout',{style:'subtle'})+'</div></div>'+
@@ -179,7 +183,7 @@ function settings(){
  '<div class="list-item"><strong>Last test upload:</strong><br><small>'+testTime+'</small></div>'+
  '<div class="list-item"><strong>Last encrypted backup:</strong><br><small>'+backupTime+'</small>'+backupName+'</div>'+
  driveActions+driveError+
- '<div class="footer-note">The encrypted snapshot includes students, prayer schedules, special events, attendance, attendance corrections, schedule history and staff activity. It excludes staff passwords and fingerprint templates. This is a manual backup; automatic sync and in-app restore are not yet implemented.</div></div>'+
+ '<div class="footer-note">Encrypted snapshots include students, schedules, events, attendance and audit history. Restore merges missing records and never overwrites existing entries. Old staff names are kept as non-login audit identities. Passwords, invitations and fingerprint templates are not restored. Backups are still manual; automatic backups are not yet implemented.</div></div>'+
  '<div class="card"><h2>Institution backup & synchronization</h2><p>When connected to the central server, shared records synchronize between authorized staff devices. The institution server has a separate Google Drive backup connection.</p><div class="buttons">'+button('Open institution cloud','cloud',{style:'secondary'})+'</div></div>'+
  '<div class="card"><h2>Hardware roadmap</h2><div class="list-item row between"><div><strong>R503Pro / ESP32</strong><br><small>AutoIdentify and AutoEnroll firmware source included</small></div><span class="pill warn">Device setup required</span></div><div class="list-item row between"><div><strong>8GB microSD card</strong><br><small>SD journal + pending-upload queue in ESP32 firmware</small></div><span class="pill warn">Device setup required</span></div><div class="list-item row between"><div><strong>TFT + buzzer + DS3231</strong><br><small>TFT/RTC/buzzer integration included in firmware source</small></div><span class="pill warn">Device setup required</span></div></div>'+
  '<div class="warnbox">Keep your recovery password somewhere safe and separate from the phone. Without it, the encrypted backup cannot be decrypted.</div>');
@@ -226,6 +230,14 @@ document.addEventListener('submit',e=>{e.preventDefault();let form=e.target,d=Ob
    form.reset();
    showToast('Preparing encrypted attendance backup…');
    break;
+ case 'drive-restore-form':
+   if(d.password!==d.confirm)throw Error('Backup passwords do not match.');
+   if(d.password.length<12||d.password.length>128)throw Error('Use a recovery password of 12–128 characters.');
+   if(!confirm('RESTORE by merging records from an encrypted backup? Existing records on this phone will NOT be overwritten or deleted. Continue?'))break;
+   api('driveRestore',{password:d.password});
+   form.reset();
+   showToast('Choose the encrypted .spab backup file…');
+   break;
  case 'student-save':if(!auth.admin)throw Error('Admin only.');api('save',{...d,id:editStudent?.id||'',active:d.active==='1'});students();showToast('Student saved.');break;
  case 'attendance-mark':api('attendanceMark',d);markPage(d.session_date);showToast('Attendance saved and correction logged.');break;
  case 'event-save':api('eventSave',{...d,id:editEvent?.id||'',late_minutes:Number(d.late_minutes)});editEvent=null;eventPage();showToast('Special event saved.');break;
@@ -241,6 +253,12 @@ window.onCentralUpdate=(event,data)=>{
  if(data.message&&event!=='status')showToast(data.message);
 };
 window.onDriveUpdate=(message,success)=>{if(page==='settings'){settings();}showToast(message);};
+window.onBackupRestoreComplete=(message,success)=>{
+ if(success){try{refreshData();}catch(e){}}
+ if(page==='settings')settings();
+ else if(page==='dashboard')dashboard();
+ showToast(message);
+};
 window.back=()=>{if(page==='signup'){access('login');return true;}if(page==='login')return false;if(page==='dashboard')return false;dashboard();return true;};
 window.refreshRoster=()=>{if(page==='students')students();else if(page==='dashboard')dashboard();};
 try{access();}catch(e){root.innerHTML=`<div class="card" style="margin:22px">Unable to load local app data: ${esc(e.message)}</div>`;}
