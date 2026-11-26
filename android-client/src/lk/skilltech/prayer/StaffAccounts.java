@@ -29,14 +29,14 @@ final class StaffAccounts {
     StaffAccounts(SQLiteDatabase db,SharedPreferences prefs){
         this.db=db;this.prefs=prefs;
         String saved=prefs.getString("rememberStaff","");
-        try(Cursor c=db.rawQuery("SELECT id FROM staff WHERE id=? AND approved=1",new String[]{saved})){
+        try(Cursor c=db.rawQuery("SELECT id FROM staff WHERE id=? AND approved=1 AND archived=0",new String[]{saved})){
             if(c.moveToFirst())current=c.getString(0);
         }
     }
     boolean signedIn(){return !current.isEmpty();}
     String identity(){String id=current;if(id.isEmpty())throw new IllegalStateException("Log in first.");return id;}
     boolean remembered(){return signedIn()&&current.equals(prefs.getString("rememberStaff",""));}
-    boolean first(){try(Cursor c=db.rawQuery("SELECT 1 FROM staff LIMIT 1",null)){return !c.moveToFirst();}}
+    boolean first(){try(Cursor c=db.rawQuery("SELECT 1 FROM staff WHERE archived=0 LIMIT 1",null)){return !c.moveToFirst();}}
     boolean legacy(){return first()&&prefs.contains("hash");}
     void logout(){prefs.edit().remove("rememberStaff").commit();current="";}
     JSONObject state()throws JSONException{
@@ -83,7 +83,7 @@ final class StaffAccounts {
             }
             byte[] salt=new byte[16];new SecureRandom().nextBytes(salt);
             try{
-                db.execSQL("INSERT INTO staff VALUES(?,?,?,?,?,?,?)",new Object[]{key,name,name.toLowerCase(Locale.ROOT),enc(salt),enc(MainActivity.hash(pass,salt)),bootstrap?1:0,1});
+                db.execSQL("INSERT INTO staff(id,username,normalized,salt,digest,admin,approved) VALUES(?,?,?,?,?,?,?)",new Object[]{key,name,name.toLowerCase(Locale.ROOT),enc(salt),enc(MainActivity.hash(pass,salt)),bootstrap?1:0,1});
                 if(!bootstrap)db.execSQL("UPDATE staff_invitations SET used_by=? WHERE id=? AND used_by IS NULL",new Object[]{key,d.getString("invitationId")});
             }catch(android.database.sqlite.SQLiteConstraintException e){throw new IllegalArgumentException("That username is already registered.");}
             db.setTransactionSuccessful();
@@ -95,7 +95,7 @@ final class StaffAccounts {
         checkRetry();
         String pass=d.getString("password");
         if(pass.length()>128)incorrect();
-        try(Cursor c=db.rawQuery("SELECT id,salt,digest,approved FROM staff WHERE normalized=?",new String[]{d.getString("username").trim().toLowerCase(Locale.ROOT)})){
+        try(Cursor c=db.rawQuery("SELECT id,salt,digest,approved FROM staff WHERE normalized=? AND archived=0",new String[]{d.getString("username").trim().toLowerCase(Locale.ROOT)})){
             if(!c.moveToFirst()||!matches(pass,c.getString(1),c.getString(2)))incorrect();
             if(c.getInt(3)==0)throw new IllegalArgumentException("Your staff account is waiting for approval.");
             String id=c.getString(0);
@@ -106,12 +106,12 @@ final class StaffAccounts {
     private void requireAdmin()throws JSONException{if(!state().optBoolean("admin"))throw new IllegalStateException("Administrator access required.");}
     JSONArray pending()throws JSONException{
         requireAdmin();JSONArray out=new JSONArray();
-        try(Cursor c=db.rawQuery("SELECT id,username FROM staff WHERE approved=0 ORDER BY username",null)){while(c.moveToNext())out.put(new JSONObject().put("id",c.getString(0)).put("username",c.getString(1)));}
+        try(Cursor c=db.rawQuery("SELECT id,username FROM staff WHERE approved=0 AND archived=0 ORDER BY username",null)){while(c.moveToNext())out.put(new JSONObject().put("id",c.getString(0)).put("username",c.getString(1)));}
         return out;
     }
     void approve(String key)throws JSONException{
         requireAdmin();
-        db.execSQL("UPDATE staff SET approved=1 WHERE id=?",new Object[]{key});
+        db.execSQL("UPDATE staff SET approved=1 WHERE id=? AND archived=0",new Object[]{key});
     }
     String generateInvite()throws Exception{
         requireAdmin();byte[] bytes=new byte[18];new SecureRandom().nextBytes(bytes);
@@ -130,13 +130,13 @@ final class StaffAccounts {
     void revokeInvite(String id)throws Exception{requireAdmin();db.execSQL("UPDATE staff_invitations SET revoked=1 WHERE id=? AND used_by IS NULL",new Object[]{id});record(identity(),"Revoked staff invitation",id);}
     JSONArray members()throws Exception{
         requireAdmin();JSONArray out=new JSONArray();
-        try(Cursor c=db.rawQuery("SELECT id,username,admin,approved FROM staff ORDER BY username COLLATE NOCASE",null)){
+        try(Cursor c=db.rawQuery("SELECT id,username,admin,approved FROM staff WHERE archived=0 ORDER BY username COLLATE NOCASE",null)){
             while(c.moveToNext())out.put(new JSONObject().put("id",c.getString(0)).put("username",c.getString(1)).put("admin",c.getInt(2)==1).put("approved",c.getInt(3)==1));
         }return out;
     }
     void setAccess(String id,boolean active)throws Exception{
         requireAdmin();if(id.equals(identity()))throw new IllegalArgumentException("Cannot deactivate your own account.");
-        db.execSQL("UPDATE staff SET approved=? WHERE id=?",new Object[]{active?1:0,id});record(identity(),active?"Enabled staff":"Disabled staff",id);
+        db.execSQL("UPDATE staff SET approved=? WHERE id=? AND archived=0",new Object[]{active?1:0,id});record(identity(),active?"Enabled staff":"Disabled staff",id);
     }
     void record(String actor,String action,String subject){
         db.execSQL("INSERT INTO staff_activity(staff_id,action,subject,at) VALUES(?,?,?,?)",new Object[]{actor,action,subject,System.currentTimeMillis()});
