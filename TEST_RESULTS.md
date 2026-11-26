@@ -1,29 +1,35 @@
-# Smart Prayer Attendance verification notes
+# Smart Prayer Attendance verification status
 
-## Android encrypted backup and restore work
+## Android encrypted backup and restore
 
-- Implemented a restore path for the existing `SPABK001` encrypted phone-backup format.
-- Restore authenticates the AES-GCM tag before parsing the JSON or changing the database.
-- Restore uses a single SQLite transaction; errors roll back imported rows.
-- Existing students, configured schedules, events and attendance rows are preserved. Missing records are merged in.
-- Student attendance is remapped by student ID, or by case-insensitive admission number where IDs differ.
-- Historical staff identities can be kept as archived, non-login rows so old activity and attendance audit records retain staff names.
-- Staff passwords, invitation codes, fingerprint templates and fingerprint slot assignments are not restored.
-- Added a database migration for archived staff identities and an administrator-only Android document-picker restore flow.
-- Backup/restore size limits: 64 MB encrypted file and 512 MB decompressed JSON.
+- Implemented restore for the existing `SPABK001` encrypted phone-backup format.
+- AES-GCM authentication is verified before the backup JSON is parsed or any database write begins.
+- Restore uses one SQLite transaction; invalid files, wrong recovery passwords, parsing errors or database errors roll back the restore.
+- Existing phone records are preserved. Missing students, events, attendance and audit records are merged in; configured prayer schedules are not overwritten.
+- Students are matched by ID first, then case-insensitive admission number, so restored attendance can be attached to the matching local student.
+- Historical staff names can be represented as archived, non-login identities for audit display.
+- Staff passwords, invitation codes and fingerprint templates/slot assignments are not restored.
+- The app uses a 64 MB encrypted-file limit and a 512 MB decompressed input limit.
+- The Android database migrates from schema version 4 to version 5 by adding an archived staff identity flag.
 
-## Automated checks
+## Automated CI results
 
-- Android GitHub Actions build before this restore change: **run #23 succeeded**, with APK signature verification using the permanent project signing certificate.
-- A new pull-request workflow check includes `node --check android-client/assets/app.js` and a full Android Gradle build. **The restore branch check has not completed yet.**
-- Previous repository checks documented in earlier results: Python central-server tests and JavaScript syntax check passed before the current restore changes. They do not prove the new restore code works on a phone.
+- Android migration/base build, workflow run #23: **success**. Permanent APK signing and signature verification passed.
+- Encrypted backup restore PR build, workflow run #26: **success**. JavaScript syntax check, Android Gradle build, APK signature verification and artifact upload passed.
+- Merged main build, workflow run #27: **success**. Artifact: `SmartPrayer-Android-APK-v4.2.0-stable-signature`.
+- The v4.2.0 APK signature certificate SHA-1 is `EA:36:F9:FF:7A:65:33:B3:C9:E6:ED:68:A3:99:64:AB:BA:14:BD:39`, matching the permanent migration signing key.
+- Railway production deployment after the merge: **SUCCESS**.
 
 ## Not yet physically verified
 
-- Creating a new encrypted backup on a physical Android phone and uploading it to Google Drive.
-- Selecting that real `.spab` file through Android's document picker and restoring it with the correct password.
-- Confirming counts and audit names against the source phone after restore.
-- Wrong-password and damaged-file behavior on a physical phone.
-- ESP32/R503Pro fingerprint-template backup or restore.
+- Creating a real encrypted backup from a physical Android phone and uploading it to Google Drive.
+- Selecting that actual `.spab` file through Android's document picker and restoring it with the correct recovery password.
+- Confirming the restored student, attendance and audit counts against the source phone.
+- Testing wrong-password, damaged-file and oversized-file errors on a physical phone.
+- R503Pro/ESP32 fingerprint-template backup or restore.
 
-Do not treat this as a completed physical-device acceptance test until those checks have been performed with a test backup. Use a spare/test device or non-production test data for the first restore trial.
+Do not treat a successful CI build as a physical-device acceptance test. Perform the first restore with a test backup and non-production/test data, and verify the result before relying on it for production records.
+
+## Remaining backup roadmap
+
+Backups are still manual. Scheduled automatic phone backup, automatic Google Drive retention, fingerprint-template backup and a user-facing list of available Drive backups remain future work. Phone-local backups are separate from the institution server's database and its separate Google Drive backup.
