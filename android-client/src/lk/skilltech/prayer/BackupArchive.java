@@ -440,9 +440,9 @@ final class BackupArchive {
             return value;
         }
         @Override public int read(byte[] buffer,int offset,int length)throws IOException{
-            int count=super.read(buffer,offset,length);
-            if(count>0)count(count);
-            return count;
+            int readCount=super.read(buffer,offset,length);
+            if(readCount>0)count(readCount);
+            return readCount;
         }
     }
 
