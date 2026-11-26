@@ -32,7 +32,9 @@ android {
         applicationId 'lk.skilltech.prayer'
         minSdk 26
         targetSdk 35
-        versionCode 9
+        // GitHub run numbers rise automatically, preventing versionCode
+        // from blocking Android updates. Local builds fall back to 9.
+        versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '9').toInteger()
         versionName '4.1.1'
     }
 
