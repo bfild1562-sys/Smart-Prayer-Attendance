@@ -288,11 +288,13 @@ final class BackupArchive {
         String sourceStudent=text(row.get("student_id"));
         String targetStudent=studentIds.get(sourceStudent);
         values.put("student_id",targetStudent==null?sourceStudent:targetStudent);
+        if(containsMatchingRow(db,"attendance_audit",values,"student_id","session_key","session_date","old_status","new_status","reason","actor_id","recorded_at"))return;
         if(db.insertWithOnConflict("attendance_audit",null,values,SQLiteDatabase.CONFLICT_IGNORE)!=-1)result.auditAdded++;
     }
 
     private static void restoreScheduleAudit(SQLiteDatabase db,Map<String,Object> row,RestoreResult result){
         ContentValues values=values(row,"subject","previous_json","next_json","actor_id","recorded_at");
+        if(containsMatchingRow(db,"schedule_audit",values,"subject","previous_json","next_json","actor_id","recorded_at"))return;
         if(db.insertWithOnConflict("schedule_audit",null,values,SQLiteDatabase.CONFLICT_IGNORE)!=-1)result.scheduleAuditAdded++;
     }
 
@@ -300,6 +302,7 @@ final class BackupArchive {
         String actor=text(row.get("staff_id"));
         if(actor.isEmpty()||!exists(db,"staff","id",actor))return;
         ContentValues values=values(row,"staff_id","action","subject","at");
+        if(containsMatchingRow(db,"staff_activity",values,"staff_id","action","subject","at"))return;
         if(db.insertWithOnConflict("staff_activity",null,values,SQLiteDatabase.CONFLICT_IGNORE)!=-1)result.staffActivityAdded++;
     }
 
@@ -309,6 +312,18 @@ final class BackupArchive {
 
     private static boolean exists(SQLiteDatabase db,String table,String column,String value){
         try(Cursor c=db.rawQuery("SELECT 1 FROM "+table+" WHERE "+column+"=? LIMIT 1",new String[]{value})){return c.moveToFirst();}
+    }
+
+    private static boolean containsMatchingRow(SQLiteDatabase db,String table,ContentValues values,String...columns){
+        StringBuilder where=new StringBuilder();
+        String[] args=new String[columns.length];
+        for(int i=0;i<columns.length;i++){
+            if(i>0)where.append(" AND ");
+            where.append(columns[i]).append("=?");
+            Object value=values.get(columns[i]);
+            args[i]=value==null?null:String.valueOf(value);
+        }
+        try(Cursor c=db.rawQuery("SELECT 1 FROM "+table+" WHERE "+where+" LIMIT 1",args)){return c.moveToFirst();}
     }
 
     private static ContentValues values(Map<String,Object> row,String...columns){
