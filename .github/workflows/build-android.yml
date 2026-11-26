@@ -6,6 +6,9 @@ on:
     branches:
       - main
       - master
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
@@ -74,6 +77,9 @@ jobs:
             echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
           } >> "$GITHUB_ENV"
 
+      - name: Check Android JavaScript syntax
+        run: node --check android-client/assets/app.js
+
       - name: Build APK
         run: |
           gradle -p android-client assembleDebug --no-daemon --stacktrace
@@ -86,6 +92,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SmartPrayer-Android-APK-v4.1.1-stable-signature
+          name: SmartPrayer-Android-APK-v4.2.0-stable-signature
           path: android-client/build/outputs/apk/debug/*.apk
           if-no-files-found: error

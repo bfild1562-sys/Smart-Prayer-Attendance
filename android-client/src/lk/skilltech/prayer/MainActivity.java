@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.UUID;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
@@ -37,28 +38,32 @@ public class MainActivity extends Activity {
     private CentralSync central;
     private String exportFrom="",exportTo="";
     private boolean choosingDocument;
+    private volatile boolean restoreInProgress;
+    private char[] pendingRestorePassword;
     private long backgroundAt;
     private final android.os.Handler syncHandler=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable foregroundSync=new Runnable(){
-        public void run(){if(central!=null && staff!=null && staff.signedIn())central.requestSync();syncHandler.postDelayed(this,120000);}
+        public void run(){if(central!=null && staff!=null && staff.signedIn() && !restoreInProgress)central.requestSync();syncHandler.postDelayed(this,120000);}
     };
-    private static final int EXPORT=100, IMPORT=101, EXPORT_ATTENDANCE=102;
+    private static final int EXPORT=100, IMPORT=101, EXPORT_ATTENDANCE=102, RESTORE_BACKUP=103;
 
     static final class Store extends SQLiteOpenHelper {
-        Store(Context c){super(c,"students.sqlite",null,4);}
+        Store(Context c){super(c,"students.sqlite",null,5);}
         public void onCreate(SQLiteDatabase db){
             db.execSQL("CREATE TABLE students(id TEXT PRIMARY KEY, admission TEXT COLLATE NOCASE UNIQUE NOT NULL, name TEXT NOT NULL, group_name TEXT NOT NULL, enrolled TEXT NOT NULL, active INTEGER NOT NULL)");
             StaffAccounts.schema(db);
+            db.execSQL("ALTER TABLE staff ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
             StaffAccounts.invitationSchema(db);
             AttendanceStore.schema(db);
             db.execSQL("ALTER TABLE students ADD COLUMN fingerprint_number INTEGER");
             db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_students_fp_num ON students(fingerprint_number) WHERE fingerprint_number IS NOT NULL");
         }
         public void onUpgrade(SQLiteDatabase db,int from,int to){
-            if(from<1||from>4||to!=4)throw new IllegalStateException("Unsupported database version");
+            if(from<1||from>4||to!=5)throw new IllegalStateException("Unsupported database version");
             if(from==1)StaffAccounts.schema(db);
             if(from<=2){StaffAccounts.invitationSchema(db);AttendanceStore.schema(db);}
             if(from<=3){db.execSQL("ALTER TABLE students ADD COLUMN fingerprint_number INTEGER");db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_students_fp_num ON students(fingerprint_number) WHERE fingerprint_number IS NOT NULL");}
+            db.execSQL("ALTER TABLE staff ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
         }
     }
 
@@ -109,7 +114,7 @@ public class MainActivity extends Activity {
     @Override public void onStop(){syncHandler.removeCallbacks(foregroundSync);super.onStop();backgroundAt=android.os.SystemClock.elapsedRealtime();}
     @Override public void onStart(){super.onStart();syncHandler.removeCallbacks(foregroundSync);syncHandler.postDelayed(foregroundSync,15000);if(staff.signedIn() && !staff.remembered() && !choosingDocument && backgroundAt!=0 && android.os.SystemClock.elapsedRealtime()-backgroundAt>60000){staff.logout();web.reload();}}
     @Override public void onBackPressed(){web.evaluateJavascript("window.back ? window.back() : false",v->{if(!"true".equals(v))super.onBackPressed();});}
-    @Override public void onDestroy(){syncHandler.removeCallbacks(foregroundSync);web.removeJavascriptInterface("Phone");web.destroy();store.close();super.onDestroy();}
+    @Override public void onDestroy(){syncHandler.removeCallbacks(foregroundSync);clearPendingRestorePassword();web.removeJavascriptInterface("Phone");web.destroy();store.close();super.onDestroy();}
 
     private void requireUnlock(){if(!staff.signedIn())throw new IllegalStateException("Unlock the register first.");}
     static byte[] hash(String pass,byte[] salt) throws Exception{
@@ -159,6 +164,14 @@ public class MainActivity extends Activity {
                     if(password.length()<12||password.length()>128)
                         throw new IllegalArgumentException("Backup password must be 12–128 characters.");
                     runOnUiThread(()->drive.backup(password.toCharArray()));
+                    return pack(true,null);
+                case "driveRestore":
+                    if(!staff.state().optBoolean("admin",false))throw new IllegalStateException("Administrator access required.");
+                    String recoveryPassword=d.getString("password");
+                    if(recoveryPassword.length()<12||recoveryPassword.length()>128)
+                        throw new IllegalArgumentException("Backup password must be 12–128 characters.");
+                    if(choosingDocument||restoreInProgress)throw new IllegalStateException("A file selection or restore is already in progress.");
+                    runOnUiThread(()->{clearPendingRestorePassword();pendingRestorePassword=recoveryPassword.toCharArray();pickBackupRestore();});
                     return pack(true,null);
                 case "appSigning":return pack(new JSONObject().put("package",getPackageName()).put("sha1",appSha1()),null);
                 case "copySigning":runOnUiThread(()->{android.content.ClipboardManager c=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);c.setPrimaryClip(android.content.ClipData.newPlainText("Smart Prayer SHA-1",appSha1()));toast("APK SHA-1 copied.");});return pack(true,null);
@@ -241,6 +254,99 @@ public class MainActivity extends Activity {
         }finally{db.endTransaction();}
     }
     private void toast(String msg){Toast.makeText(this,msg,Toast.LENGTH_LONG).show();}
+    private void pickBackupRestore(){
+        if(!staff.signedIn()||pendingRestorePassword==null){
+            clearPendingRestorePassword();
+            notifyBackupRestore("Restore cancelled because the recovery session expired.",false);
+            return;
+        }
+        Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_TITLE,"Choose Smart Prayer encrypted backup (.spab)");
+        try{
+            choosingDocument=true;
+            startActivityForResult(intent,RESTORE_BACKUP);
+        }catch(android.content.ActivityNotFoundException e){
+            choosingDocument=false;
+            clearPendingRestorePassword();
+            notifyBackupRestore("No Android document picker is available on this phone.",false);
+        }
+    }
+
+    private void handleBackupRestoreResult(int result,Intent data){
+        choosingDocument=false;
+        char[] password=pendingRestorePassword;
+        pendingRestorePassword=null;
+        if(result!=RESULT_OK||data==null||data.getData()==null){
+            if(password!=null)Arrays.fill(password,'\0');
+            notifyBackupRestore("Backup restore cancelled. Your current records were not changed.",false);
+            return;
+        }
+        if(password==null){
+            notifyBackupRestore("Recovery password was cleared. Enter it again and choose the backup.",false);
+            return;
+        }
+        if(!staff.signedIn()){
+            Arrays.fill(password,'\0');
+            notifyBackupRestore("Log in again before restoring a backup. Your current records were not changed.",false);
+            return;
+        }
+        if(restoreInProgress){
+            Arrays.fill(password,'\0');
+            notifyBackupRestore("Another restore is already running.",false);
+            return;
+        }
+        restoreInProgress=true;
+        Uri selected=data.getData();
+        String actor=staff.identity();
+        new Thread(()->{
+            File temporary=null;
+            String message;
+            boolean success=false;
+            try{
+                temporary=File.createTempFile("smart-prayer-restore-",".spab",getCacheDir());
+                long copied=0;
+                try(InputStream input=getContentResolver().openInputStream(selected);
+                    OutputStream output=new FileOutputStream(temporary)){
+                    if(input==null)throw new IOException("Android could not open the selected backup file.");
+                    byte[] buffer=new byte[32768];
+                    int count;
+                    while((count=input.read(buffer))!=-1){
+                        copied+=count;
+                        if(copied>64L*1024L*1024L)throw new IOException("Backup file is larger than the 64 MB safety limit.");
+                        output.write(buffer,0,count);
+                    }
+                    output.flush();
+                }
+                BackupArchive.RestoreResult restored=BackupArchive.restore(temporary,store.getWritableDatabase(),password,actor);
+                message=restored.summary()+" Fingerprint templates and passwords were not restored.";
+                success=true;
+            }catch(Exception e){
+                message="Restore failed; no partial database changes were kept. "+(e.getMessage()==null?"Check the selected file and recovery password.":e.getMessage());
+            }finally{
+                Arrays.fill(password,'\0');
+                if(temporary!=null)temporary.delete();
+                restoreInProgress=false;
+            }
+            final String notice=message;
+            final boolean completed=success;
+            runOnUiThread(()->notifyBackupRestore(notice,completed));
+        }).start();
+    }
+
+    private void notifyBackupRestore(String message,boolean success){
+        runOnUiThread(()->{
+            if(!isDestroyed()&&web!=null)
+                web.evaluateJavascript("window.onBackupRestoreComplete && window.onBackupRestoreComplete("+JSONObject.quote(message)+","+success+")",null);
+            else if(!isDestroyed())toast(message);
+        });
+    }
+
+    private void clearPendingRestorePassword(){
+        if(pendingRestorePassword!=null){Arrays.fill(pendingRestorePassword,'\0');pendingRestorePassword=null;}
+    }
+
     private void pickAttendance(){
         if(!staff.signedIn())return;
         Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("text/csv");
@@ -258,6 +364,7 @@ public class MainActivity extends Activity {
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
         if(drive!=null && drive.handleActivityResult(request,result,data))return;
+        if(request==RESTORE_BACKUP){handleBackupRestoreResult(result,data);return;}
         choosingDocument=false;
         if(!staff.signedIn()||result!=RESULT_OK||data==null||data.getData()==null)return;
         Uri uri=data.getData();

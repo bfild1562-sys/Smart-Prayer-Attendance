@@ -59,7 +59,7 @@ final class DriveConnection {
             .put("lastBackupName",prefs.getString("drive_backup_name",""))
             .put("lastError",prefs.getString("drive_last_error",""))
             .put("scope","drive.file")
-            .put("note","Manual encrypted snapshots of student/attendance data supported; no automatic sync, restore-in-app, or fingerprint-template backup yet.");
+            .put("note","Manual encrypted snapshots and transactional merge restore are supported; automatic backup/sync and fingerprint-template backup are not implemented.");
     }
 
     void connectAndTest(){
