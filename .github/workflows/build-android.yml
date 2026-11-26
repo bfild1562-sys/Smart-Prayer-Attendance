@@ -1,4 +1,3 @@
-
 name: Build Smart Prayer Android APK
 
 on:
@@ -37,13 +36,49 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Configure permanent Android signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          for secret_name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!secret_name:-}" ]; then
+              echo "::error::Missing GitHub Actions secret: ${secret_name}"
+              exit 1
+            fi
+          done
+
+          KEYSTORE_PATH="$RUNNER_TEMP/smart-prayer-attendance-upload.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
+
+          keytool -list -keystore "$KEYSTORE_PATH" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" >/dev/null
+
+          {
+            echo "ANDROID_KEYSTORE_FILE=$KEYSTORE_PATH"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
       - name: Build APK
         run: |
           gradle -p android-client assembleDebug --no-daemon --stacktrace
 
+      - name: Verify APK signature
+        run: |
+          apksigner verify --verbose --print-certs \
+            android-client/build/outputs/apk/debug/*.apk
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SmartPrayer-Android-APK
+          name: SmartPrayer-Android-APK-v4.1.1-stable-signature
           path: android-client/build/outputs/apk/debug/*.apk
           if-no-files-found: error
