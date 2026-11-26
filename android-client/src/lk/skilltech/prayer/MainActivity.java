@@ -72,7 +72,7 @@ public class MainActivity extends Activity {
             if(!isDestroyed() && web!=null)
                 web.evaluateJavascript("window.onDriveUpdate && window.onDriveUpdate("+JSONObject.quote(message)+","+success+")",null);
         },passphrase->new BackupArchive(store.getReadableDatabase()).create(getCacheDir(),passphrase));
-        central=new CentralSync(this,store,prefs,(event,data)->{
+        central=new CentralSync(this,store,(event,data)->{
             if(!isDestroyed() && web!=null)web.evaluateJavascript(
                 "window.onCentralUpdate && window.onCentralUpdate("+JSONObject.quote(event)+","+data.toString()+")",null);
         });

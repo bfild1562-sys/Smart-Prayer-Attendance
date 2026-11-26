@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.database.Cursor;
 import android.content.ContentValues;
 import android.database.sqlite.SQLiteDatabase;
-import android.content.SharedPreferences;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
@@ -19,18 +18,17 @@ final class CentralSync {
     interface Callback { void report(String event, JSONObject data); }
     private final Activity activity;
     private final MainActivity.Store store;
-    private final SharedPreferences prefs;
     private final Callback callback;
     private volatile String token="", role="", username="", error="";
     private volatile boolean busy=false;
     private volatile JSONObject lastSummary;
     private volatile JSONArray devices = new JSONArray();
     private volatile JSONObject institutionDrive = new JSONObject();
-    private String server="";
+    private static final String INSTITUTION_SERVER="https://smart-prayer-attendance-production.up.railway.app";
+    private final String server=INSTITUTION_SERVER;
 
-    CentralSync(Activity activity, MainActivity.Store store, SharedPreferences prefs, Callback callback) {
-        this.activity=activity; this.store=store;this.prefs=prefs;this.callback=callback;
-        this.server=prefs.getString("centralServer","");
+    CentralSync(Activity activity, MainActivity.Store store, Callback callback) {
+        this.activity=activity; this.store=store;this.callback=callback;
     }
     JSONObject status() throws JSONException {
         JSONObject j=new JSONObject().put("server",server).put("connected",!token.isEmpty())
@@ -62,7 +60,9 @@ final class CentralSync {
             URI u=new URI(base);
             if(!"https".equalsIgnoreCase(u.getScheme()) || u.getHost()==null || u.getRawUserInfo()!=null || u.getQuery()!=null || u.getFragment()!=null || u.getPath()!=null && !u.getPath().replace("/", "").isEmpty())
                 throw new IllegalArgumentException("Enter a secure https://server-domain address without path or password.");
-            return base.replaceAll("/+$","");
+            if (!INSTITUTION_SERVER.equalsIgnoreCase(base.replaceAll("/+$","")))
+                throw new IllegalArgumentException("Use the configured Smart Prayer institution server.");
+            return INSTITUTION_SERVER;
         } catch(java.net.URISyntaxException e){throw new IllegalArgumentException("Invalid HTTPS server URL.");}
     }
     private JSONObject request(String base,String endpoint,JSONObject payload,String bearer) throws Exception {
@@ -87,9 +87,15 @@ final class CentralSync {
             if(stream==null)throw new IOException("No server response (HTTP "+code+")");
             ByteArrayOutputStream bytes=new ByteArrayOutputStream();
             try(InputStream in=stream){byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1){if(bytes.size()+n>350000)throw new IOException("Server response too large");bytes.write(b,0,n);}}
-            JSONObject response=new JSONObject(bytes.toString("UTF-8"));
+            String operation=c.getRequestMethod()+" "+url.getAuthority()+endpoint;
+            JSONObject response;
+            try {
+                response=new JSONObject(bytes.toString("UTF-8"));
+            } catch (JSONException invalidJson) {
+                throw new IOException(operation+" returned HTTP "+code+" without a JSON response.");
+            }
             if(code<200||code>=300||!response.optBoolean("ok",false))
-                throw new IOException("Server HTTP "+code+": "+response.optString("error","Request failed"));
+                throw new IOException(operation+" returned HTTP "+code+": "+response.optString("error","Request failed"));
             return response.getJSONObject("data");
         } finally{c.disconnect();}
     }
@@ -98,8 +104,11 @@ final class CentralSync {
             final String verified=validatedUrl(base);
             JSONObject body=new JSONObject().put("username",user).put("password",password);
             JSONObject result=request(verified,"/api/v1/login",body,"");
-            token=result.getString("token");username=result.getString("username");role=result.getString("role");server=verified;
-            prefs.edit().putString("centralServer",verified).apply();
+            String newToken=result.getString("token");
+            JSONObject identity=request(verified,"/api/v1/me",null,newToken);
+            String authenticatedUser=identity.getString("username");
+            String authenticatedRole=identity.getString("role");
+            token=newToken;username=authenticatedUser;role=authenticatedRole;
             JSONObject sum=request(server,"/api/v1/summary",null,token);
             lastSummary=sum;
             emit("summary",sum);
@@ -174,9 +183,26 @@ final class CentralSync {
         return cv;
     }
     private void pull()throws Exception {
-        JSONObject snapshot=request(server,"/api/v1/sync/snapshot",null,token);
+        if(lastSummary!=null && lastSummary.optBoolean("paged_snapshot")){
+            for(String collection:new String[]{"students","schedules","events","attendance"}){
+                String after="";
+                do {
+                    JSONObject page=request(server,"/api/v1/sync/page",
+                        new JSONObject().put("collection",collection).put("after",after),token);
+                    JSONObject snapshot=new JSONObject();
+                    for(String key:new String[]{"students","schedules","events","attendance"})
+                        snapshot.put(key,key.equals(collection)?page.getJSONArray("rows"):new JSONArray());
+                    applySnapshot(snapshot);
+                    after=page.getString("next");
+                } while(!after.isEmpty());
+            }
+        }else{
+            applySnapshot(request(server,"/api/v1/sync/snapshot",null,token));
+        }
+        emit("progress","Shared records refreshed.");
+    }
+    private void applySnapshot(JSONObject snapshot)throws Exception {
         SQLiteDatabase db=store.getWritableDatabase();
-        int received=0;
         db.beginTransaction();
         try {
             JSONArray students=snapshot.getJSONArray("students");
@@ -184,7 +210,6 @@ final class CentralSync {
                 JSONObject data=students.getJSONObject(i);
                 db.insertWithOnConflict("students",null,values(data),SQLiteDatabase.CONFLICT_IGNORE);
                 db.update("students",values(data),"id=?",new String[]{data.getString("id")});
-                received++;
             }
             JSONArray schedules=snapshot.getJSONArray("schedules");
             for(int i=0;i<schedules.length();i++){
@@ -213,7 +238,6 @@ final class CentralSync {
             }
             db.setTransactionSuccessful();
         } finally {db.endTransaction();}
-        emit("progress",new JSONObject().put("message","Cloud data refreshed: "+received+" students checked."));
     }
     private void requireLogin(){if(token.isEmpty())throw new IllegalStateException("Log in to the central server first.");}
     private void requireAdmin(){requireLogin();if(!"admin".equals(role))throw new IllegalStateException("Central administrator account required.");}

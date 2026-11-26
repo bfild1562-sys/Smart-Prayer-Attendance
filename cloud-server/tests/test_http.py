@@ -24,6 +24,18 @@ class HTTPIntegration(unittest.TestCase):
         data=None if payload is None else json.dumps(payload).encode()
         req=urllib.request.Request(self.base+path,data=data,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
         return json.load(urllib.request.urlopen(req))['data']
+    def test_android_initial_sync(self):
+        session=self.call('/api/v1/login',{'username':'admin1','password':'verysecurepw123'})
+        token=session['token']
+        identity=self.call('/api/v1/me',token=token)
+        self.assertEqual((identity['username'],identity['role']),('admin1','admin'))
+        self.assertIn('attendance',self.call('/api/v1/summary',token=token))
+        snapshot=self.call('/api/v1/sync/snapshot',token=token)
+        for collection in ('students','schedules','events','attendance'):
+            self.assertIsInstance(snapshot[collection],list)
+        self.assertIn('devices',self.call('/api/v1/devices',token=token))
+        self.assertIn('connected',self.call('/api/v1/admin/drive/status',token=token))
+
     def test_login_create_invite_new_staff(self):
         self.assertEqual(self.call('/health')['status'],'ok')
         admin=self.call('/api/v1/login',{'username':'admin1','password':'verysecurepw123'})['token']

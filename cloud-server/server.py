@@ -236,6 +236,7 @@ def sync_batch(db,actor,payload):
 
 def summary(db):
     return {
+     'paged_snapshot':True,
      'students':db.execute('SELECT COUNT(*) FROM students WHERE active=1').fetchone()[0],
      'attendance':db.execute('SELECT COUNT(*) FROM attendance').fetchone()[0],
      'staff':db.execute('SELECT COUNT(*) FROM staff WHERE active=1').fetchone()[0],
@@ -297,6 +298,17 @@ def dispatch(db,method,path,body,headers):
         return {'devices':[dict(x) for x in db.execute('SELECT id,name,enabled,last_seen FROM devices ORDER BY name')]}
     if method=='GET' and path=='/api/v1/device-scans':
         return [dict(x) for x in db.execute('SELECT * FROM device_scans ORDER BY received_at DESC LIMIT 200')]
+    if method=='POST' and path=='/api/v1/sync/page':
+        tables={'students':('students','id'),'events':('special_events','id'),
+                'attendance':('attendance','id'),'schedules':('prayer_schedule','prayer')}
+        collection=body.get('collection')
+        if not isinstance(collection,str) or collection not in tables:fail('Unknown snapshot collection')
+        after=text(body.get('after',''),'cursor',120,True)
+        table,column=tables[collection]
+        # Identifiers come exclusively from the table above. Page by stable primary key.
+        page=[dict(r) for r in db.execute(
+            f'SELECT * FROM {table} WHERE {column}>? ORDER BY {column} LIMIT 81',(after,))]
+        return {'rows':page[:80],'next':page[79][column] if len(page)>80 else ''}
     if method=='GET' and path=='/api/v1/sync/snapshot':
         return {
           'students':[dict(r) for r in db.execute('SELECT * FROM students ORDER BY id LIMIT 1500')],

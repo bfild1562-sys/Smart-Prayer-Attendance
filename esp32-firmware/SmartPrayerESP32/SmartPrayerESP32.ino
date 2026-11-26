@@ -124,8 +124,9 @@ String recordAttendance(uint16_t slot,uint16_t confidence){
   if(!lockSD())return "SD BUSY";
   File file=SD.open(queueFile,FILE_APPEND);
   if(!file){unlockSD();return "SD WRITE ERROR";}
-  size_t n=file.println(line);file.flush();file.close();unlockSD();
-  if(n<line.length()+1)return "SD WRITE INCOMPLETE";
+  line += '\n';
+  size_t n=file.print(line);file.flush();file.close();unlockSD();
+  if(n!=line.length())return "SD WRITE INCOMPLETE";
   lastMark=matchStudentName((slot+1)/2)+" "+phase;
   return phase;
 }
@@ -214,12 +215,14 @@ static void uploadBatch(){
  uint32_t next=start;
  while(f.available() && events.size()<20){
    String row=f.readStringUntil('\n');
+   // Older journals used println(), which leaves a carriage return after readStringUntil().
+   row.trim();
    if(!row.endsWith("}"))break;
    StaticJsonDocument<400> obj;if(deserializeJson(obj,row))break;
    events.add(obj.as<JsonObject>());next=f.position();
  }
  f.close();unlockSD();
- if(events.isEmpty())return;
+ if(events.size()==0)return;
  String json,resp;serializeJson(batch,json);
  if(cloudRequest(false,"/api/v1/device/scans",json,resp)){
    DynamicJsonDocument ack(8192);

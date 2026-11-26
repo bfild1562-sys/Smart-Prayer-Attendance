@@ -31,6 +31,21 @@ class CentralTests(unittest.TestCase):
         self.assertEqual(self.call('GET','/api/v1/summary',{},self.auth)['attendance'],1)
         self.call('POST','/api/v1/attendance/correct',{'student_id':'s01','session_key':'prayer:Asr','session_date':'2026-11-25','status':'RED_MARK','reason':'Staff correction'},self.auth)
         self.assertEqual(self.db.execute('SELECT status FROM attendance').fetchone()[0],'RED_MARK')
+    def test_snapshot_pages_include_older_attendance(self):
+        self.db.execute("INSERT INTO students VALUES('s','a','Test','A','2026-01-01',1,NULL)")
+        for i in range(510):
+            self.db.execute("INSERT INTO attendance VALUES(?,?,?,?,?,?,?,?,?)",
+                (str(i),'s','event:'+str(i),'2026-11-25','PRESENT','MANUAL','test',i,''))
+        after=''
+        ids=[]
+        while True:
+            result=self.call('POST','/api/v1/sync/page',{'collection':'attendance','after':after},self.auth)
+            ids.extend(r['id'] for r in result['rows'])
+            after=result['next']
+            if not after:break
+        self.assertEqual(len(ids),510)
+        self.assertEqual(len(set(ids)),510)
+
     def test_roll_back_on_failure(self):
         student={'id':'s01','admission':'A01','name':'Student One','group_name':'G','enrolled':'2026-11-01','active':True}
         bogus={'id':'r','student_id':'missing','session_key':'prayer:Asr','session_date':'2026-11-25','status':'PRESENT','source':'MANUAL','changed_by':'staff','recorded_at':42,'note':''}
