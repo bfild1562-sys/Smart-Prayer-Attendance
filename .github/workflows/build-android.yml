@@ -73,7 +73,7 @@ jobs:
 
       - name: Verify APK signature
         run: |
-          apksigner verify --verbose --print-certs \
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs \
             android-client/build/outputs/apk/debug/*.apk
 
       - name: Upload APK
