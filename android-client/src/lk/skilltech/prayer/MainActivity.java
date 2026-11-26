@@ -280,7 +280,7 @@ public class MainActivity extends Activity {
         char[] password=pendingRestorePassword;
         pendingRestorePassword=null;
         if(result!=RESULT_OK||data==null||data.getData()==null){
-            if(password!=null)Arrays.fill(password,'\\0');
+            if(password!=null)Arrays.fill(password,'\0');
             notifyBackupRestore("Backup restore cancelled. Your current records were not changed.",false);
             return;
         }
@@ -294,7 +294,7 @@ public class MainActivity extends Activity {
             return;
         }
         if(restoreInProgress){
-            Arrays.fill(password,'\\0');
+            Arrays.fill(password,'\0');
             notifyBackupRestore("Another restore is already running.",false);
             return;
         }
@@ -326,7 +326,7 @@ public class MainActivity extends Activity {
             }catch(Exception e){
                 message="Restore failed; no partial database changes were kept. "+(e.getMessage()==null?"Check the selected file and recovery password.":e.getMessage());
             }finally{
-                Arrays.fill(password,'\\0');
+                Arrays.fill(password,'\0');
                 if(temporary!=null)temporary.delete();
                 restoreInProgress=false;
             }
@@ -345,7 +345,7 @@ public class MainActivity extends Activity {
     }
 
     private void clearPendingRestorePassword(){
-        if(pendingRestorePassword!=null){Arrays.fill(pendingRestorePassword,'\\0');pendingRestorePassword=null;}
+        if(pendingRestorePassword!=null){Arrays.fill(pendingRestorePassword,'\0');pendingRestorePassword=null;}
     }
 
     private void pickAttendance(){
