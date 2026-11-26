@@ -1,16 +1,49 @@
 plugins {
     id 'com.android.application' version '8.7.3'
 }
+
+// All APKs must use the same long-lived signing identity.
+// The GitHub Actions workflow supplies these values from repository secrets.
+def signingStoreFile = System.getenv('ANDROID_KEYSTORE_FILE')
+def signingStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def signingKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
+def signingKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+
 android {
     namespace 'lk.skilltech.prayer'
     compileSdk 35
+
+    signingConfigs {
+        stable {
+            if (signingStoreFile == null || signingStorePassword == null ||
+                signingKeyAlias == null || signingKeyPassword == null) {
+                throw new GradleException(
+                    'Permanent Android signing is not configured. Add the ANDROID_KEYSTORE_* GitHub Actions secrets.'
+                )
+            }
+            storeFile file(signingStoreFile)
+            storePassword signingStorePassword
+            keyAlias signingKeyAlias
+            keyPassword signingKeyPassword
+        }
+    }
+
     defaultConfig {
         applicationId 'lk.skilltech.prayer'
         minSdk 26
         targetSdk 35
-        versionCode 8
-        versionName '4.1'
+        versionCode 9
+        versionName '4.1.1'
     }
+
+    buildTypes {
+        // Keep the existing debug APK workflow, but sign every build with
+        // the permanent key so Android can install future APKs as updates.
+        debug {
+            signingConfig signingConfigs.stable
+        }
+    }
+
     sourceSets.main {
         manifest.srcFile 'AndroidManifest.xml'
         java.srcDirs = ['src']
