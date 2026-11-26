@@ -150,29 +150,19 @@ final class BackupArchive {
             throw new IllegalArgumentException("Choose a valid Smart Prayer .spab backup file.");
 
         // First pass fully parses and authenticates the archive before the database is changed.
-        ArchiveMetadata metadata=readArchive(archive,passphrase,(table,row)->{
+        ArchiveMetadata metadata=new ArchiveMetadata();
+        ArchiveMetadata parsed=readArchive(archive,passphrase,(table,row)->{
             if("staff_directory".equals(table)){
                 String id=text(row.get("id"));
                 String username=text(row.get("username"));
-                if(!id.isEmpty())metadataPutStaffNamePlaceholder(id,username);
+                if(!id.isEmpty()&&!username.isEmpty())metadata.staffNames.put(id,username);
             }
-            if("staff_activity".equals(table))addFallbackStaff(metadataHolder[0],text(row.get("staff_id")));
+            if("staff_activity".equals(table))addFallbackStaff(metadata,text(row.get("staff_id")));
+            if("attendance".equals(table))addFallbackStaff(metadata,text(row.get("changed_by")));
+            if("attendance_audit".equals(table))addFallbackStaff(metadata,text(row.get("actor_id")));
         });
+        metadata.tables.addAll(parsed.tables);
         return restoreAuthenticated(archive,db,passphrase,restoringStaffId,metadata);
-    }
-
-    // Separate implementation keeps preflight metadata small: only historical staff IDs/names
-    // are retained in memory; attendance and student records are streamed in the second pass.
-    private static final ThreadLocal<ArchiveMetadata> metadataHolder=new ThreadLocal<>();
-
-    private static void metadataPutStaffNamePlaceholder(String id,String username){
-        ArchiveMetadata metadata=metadataHolder.get();
-        if(metadata!=null&&!id.isEmpty()&&!username.isEmpty())metadata.staffNames.put(id,username);
-    }
-
-    private static void addFallbackStaff(ArchiveMetadata metadata,String id){
-        if(metadata!=null&&!id.isEmpty()&&!metadata.staffNames.containsKey(id))
-            metadata.staffNames.put(id,"Archived staff");
     }
 
     private static RestoreResult restoreAuthenticated(File archive,SQLiteDatabase db,char[] passphrase,String restoringStaffId,ArchiveMetadata metadata)throws Exception{
