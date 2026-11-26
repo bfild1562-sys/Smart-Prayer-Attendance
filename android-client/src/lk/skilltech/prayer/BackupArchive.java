@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FilterInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -138,6 +139,7 @@ final class BackupArchive {
                 }
             }
             if(archive.length()<60)throw new IllegalStateException("Backup archive unexpectedly empty.");
+            if(archive.length()>64L*1024L*1024L)throw new IllegalStateException("Encrypted backup exceeds the 64 MB restore limit.");
             completed=true;
             return archive;
         }finally{
@@ -410,7 +412,7 @@ final class BackupArchive {
             cipher.init(Cipher.DECRYPT_MODE,new SecretKeySpec(key,"AES"),new GCMParameterSpec(128,nonce));
             // doFinal verifies the GCM authentication tag before JSON is parsed or imported.
             compressed=cipher.doFinal(encrypted);
-            return new GZIPInputStream(new WipingByteArrayInputStream(compressed),32768);
+            return new BoundedInputStream(new GZIPInputStream(new WipingByteArrayInputStream(compressed),32768),512L*1024L*1024L);
         }catch(javax.crypto.AEADBadTagException e){
             if(compressed!=null)Arrays.fill(compressed,(byte)0);
             throw new IllegalArgumentException("Wrong recovery password or damaged backup.",e);
@@ -421,6 +423,26 @@ final class BackupArchive {
             try{input.close();}catch(Exception ignored){}
             if(encrypted!=null)Arrays.fill(encrypted,(byte)0);
             if(key!=null)Arrays.fill(key,(byte)0);
+        }
+    }
+
+    private static final class BoundedInputStream extends FilterInputStream {
+        private final long maximum;
+        private long total;
+        BoundedInputStream(InputStream input,long maximum){super(input);this.maximum=maximum;}
+        private void count(long amount)throws IOException{
+            total+=amount;
+            if(total>maximum)throw new IOException("Decompressed backup exceeds the 512 MB safety limit.");
+        }
+        @Override public int read()throws IOException{
+            int value=super.read();
+            if(value!=-1)count(1);
+            return value;
+        }
+        @Override public int read(byte[] buffer,int offset,int length)throws IOException{
+            int count=super.read(buffer,offset,length);
+            if(count>0)count(count);
+            return count;
         }
     }
 
