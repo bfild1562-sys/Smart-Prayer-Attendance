@@ -4,7 +4,7 @@ const root=document.querySelector('#main');
 const toast=document.querySelector('#msg');
 let page='login',auth=null,people=[],schedules=[],events=[],timer=null,toastTimer=null;
 let editStudent=null,editEvent=null,lastInvite='',reportMonth='',reportFilter='',logFrom='',logTo='',markDay='';
-let centralInvite='',centralFeedback='';
+let centralInvite='',centralFeedback='',newDeviceKey='';
 const PRAYERS=['Fajr','Dhuhr','Asr','Maghrib','Isha'];
 const icons={dashboard:'◫',students:'♙',mark:'✓',schedule:'◷',events:'✧',reports:'▤',staff:'♙',cloud:'☁',settings:'⚙'};
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
