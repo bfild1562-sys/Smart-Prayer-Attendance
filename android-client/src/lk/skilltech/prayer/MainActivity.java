@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.UUID;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
@@ -285,6 +286,11 @@ public class MainActivity extends Activity {
         }
         if(password==null){
             notifyBackupRestore("Recovery password was cleared. Enter it again and choose the backup.",false);
+            return;
+        }
+        if(!staff.signedIn()){
+            Arrays.fill(password,'\0');
+            notifyBackupRestore("Log in again before restoring a backup. Your current records were not changed.",false);
             return;
         }
         if(restoreInProgress){
