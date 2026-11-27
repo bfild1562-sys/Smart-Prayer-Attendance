@@ -96,6 +96,29 @@ public class MainActivity extends Activity {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        // WebView does not provide the app's JavaScript confirm() dialogs unless
+        // the host handles them. The UI uses confirm() before sensitive actions,
+        // including encrypted backup upload and restore.
+        web.setWebChromeClient(new WebChromeClient(){
+            @Override public boolean onJsConfirm(WebView view,String url,String message,JsResult result){
+                new AlertDialog.Builder(MainActivity.this)
+                    .setMessage(message)
+                    .setPositiveButton(android.R.string.ok,(dialog,which)->result.confirm())
+                    .setNegativeButton(android.R.string.cancel,(dialog,which)->result.cancel())
+                    .setOnCancelListener(dialog->result.cancel())
+                    .show();
+                return true;
+            }
+
+            @Override public boolean onJsAlert(WebView view,String url,String message,JsResult result){
+                new AlertDialog.Builder(MainActivity.this)
+                    .setMessage(message)
+                    .setPositiveButton(android.R.string.ok,(dialog,which)->result.confirm())
+                    .setOnCancelListener(dialog->result.confirm())
+                    .show();
+                return true;
+            }
+        });
         web.setWebViewClient(new WebViewClient(){
             @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){
